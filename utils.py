@@ -131,6 +131,41 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         class_names = dst_train.classes
         class_map = {x: x for x in range(num_classes)}
 
+    
+    #####################################################################
+    # Added by Franz
+    #####################################################################
+
+    elif dataset == 'RaspiCar':
+        args.window_size = 10
+        args.test_split = 0.2
+        args.image_size = (32, 32)
+
+        df = load_raspicar_data(args)
+
+        scaler = StandardScaler()
+        scaler.fit(df[args.sens_cols])
+
+                                                                                
+        train_data, test_data = train_test_split(df, test_size=args.test_split, random_state=1337)  # TODO: set random_state to args.seed, add args.seed to arguments
+        dst_train = RaspiCarDataset(train_data, scaler, args.sens_cols, args.image_size, 'image')   # TODO: set unimodal to args.unimodal add args.unimodal to arguments
+        dst_test = RaspiCarDataset(test_data, scaler, args.sens_cols, args.image_size, 'image')     # TODO: set unimodal to args.unimodal add args.unimodal to arguments
+
+        args.n_sensors = len(SENS_COLS_CAR)
+        args.n_sensor_features = 9 # 9 = 1 sensor value + 8 statistical sensor features
+        args.n_input_features = args.n_sensors * args.n_sensor_features
+        args.n_output_features = NUM_STEERING_ANGLES
+
+        sample_image = dst_train[0][0]#[0] #TODO: undo, this now only works because RaspiCarDataset returns only images
+        channel = sample_image.shape[0]
+        im_size = sample_image.shape[1:]
+        mean = [0.5087, 0.4848, 0.4292]
+        std = [0.1729, 0.1907, 0.2188]
+        num_classes = NUM_STEERING_ANGLES
+        class_names = [str(i) for i in range(num_classes)]
+        class_map = {x: x for x in range(num_classes)}
+        class_map_inv = None
+
     else:
         exit('unknown dataset: %s'%dataset)
 
@@ -674,3 +709,125 @@ AUGMENT_FNS = {
     'scale': [rand_scale],
     'rotate': [rand_rotate],
 }
+
+
+#####################################################################
+# Added by Franz
+#####################################################################
+
+import os
+import re
+import time
+import random
+import warnings
+import pandas as pd
+from glob import glob
+from collections import defaultdict
+
+import cv2
+import h5py
+import tqdm
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.calibration import LabelEncoder
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from sklearn.metrics import f1_score
+from PIL import Image
+
+
+SENS_COLS_CAR = ['gyro_x', 'gyro_y', 'gyro_z', 'accel_x', 'accel_y', 'accel_z', 'tof']
+NUM_STEERING_ANGLES = 11
+
+
+def load_raspicar_data(args, root='./data/raspicar/'):
+    args.sens_cols = SENS_COLS_CAR
+
+    df = pd.DataFrame()
+    for dirpath, _, fnames in os.walk(root):
+        for f in fnames:
+            if f == 'frame_log.csv':
+                log_df  = pd.read_csv(dirpath + '/frame_log.csv')
+                pico_df = pd.read_csv(dirpath + '/pico_data.csv')
+                # when we merge log_df = left, pico_df = right, we half the number of rows, but we use every image once, no doubles
+                tmp_df = pd.merge_asof(log_df, pico_df, left_on='frame_timestamp', right_on='timestamp', direction='nearest')
+
+                sens_cols_new = []
+                for col in args.sens_cols:
+                    tmp_df[col + '_mean'    ] = tmp_df[col].rolling(window=args.window_size, min_periods=1).mean()
+                    tmp_df[col + '_std'     ] = tmp_df[col].rolling(window=args.window_size, min_periods=1).std()
+                    tmp_df[col + '_min'     ] = tmp_df[col].rolling(window=args.window_size, min_periods=1).min()
+                    tmp_df[col + '_q25'     ] = tmp_df[col].rolling(window=args.window_size, min_periods=1).quantile(0.25)
+                    tmp_df[col + '_median'  ] = tmp_df[col].rolling(window=args.window_size, min_periods=1).quantile(0.5)
+                    tmp_df[col + '_q75'     ] = tmp_df[col].rolling(window=args.window_size, min_periods=1).quantile(0.75)
+                    tmp_df[col + '_max'     ] = tmp_df[col].rolling(window=args.window_size, min_periods=1).max()
+                    tmp_df[col + '_kurtosis'] = tmp_df[col].rolling(window=args.window_size, min_periods=1).kurt()
+
+                    sens_cols_new.extend([
+                        col,
+                        col + '_mean',
+                        col + '_std',
+                        col + '_min',
+                        col + '_q25',
+                        col + '_median',
+                        col + '_q75',
+                        col + '_max',
+                        col + '_kurtosis'
+                    ])
+
+                split_path = dirpath.split('/')
+                tmp_df['dataset'] = split_path[-2] + '/' + split_path[-1]
+
+                df = pd.concat([df, tmp_df])
+
+    bins = np.linspace(-1, 1, NUM_STEERING_ANGLES+1)
+    df['steering_angle'] = pd.cut(df['steering_angle'], bins=bins, labels=False, include_lowest=True)
+    df = df.dropna()
+
+    args.sens_cols_old = args.sens_cols
+    args.sens_cols = sens_cols_new
+
+    return df
+
+
+class RaspiCarDataset(Dataset):
+    def __init__(self, df, scaler, sens_cols, image_size=(64, 64), unimodal=''):
+        self.dataset = df
+        self.n_classes = NUM_STEERING_ANGLES
+
+        self.scaler = scaler
+        self.sensor_data_scaled = self.scaler.transform(self.dataset[sens_cols])
+
+        self.image_size = image_size
+        self.transform = transforms.Compose([
+            transforms.Resize(self.image_size),
+            transforms.ToTensor()
+        ])
+        self.unimodal = unimodal
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        row = self.dataset.iloc[idx]
+
+        if self.unimodal != 'sensor':
+            img_fn = glob(f'./data/raspicar/{row["dataset"]}/{row["frame_number"]}_*.jpg')[0]
+            PIL_image = Image.open(img_fn)
+            image = self.transform(PIL_image)
+        else:
+            image = torch.zeros((3, self.image_size[0], self.image_size[1]))
+
+        if self.unimodal != 'image':
+            sensor_data = self.sensor_data_scaled[idx , :].astype(np.float32)
+        else:
+            sensor_data = torch.zeros((len(self.scaler.feature_names_in_),))
+
+        label = row['steering_angle']
+
+        # TODO: revert
+        # return (image, sensor_data), label
+        return image, label
+    
