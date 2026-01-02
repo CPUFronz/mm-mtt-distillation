@@ -1,1 +1,12 @@
 .idea
+idea/
+data/
+.vscode/
+logged_files/
+wandb/
+__pycache__/
+buffer*/
+ResearchLog.txt
+optuna*
+notebooks/
+*.pyc
