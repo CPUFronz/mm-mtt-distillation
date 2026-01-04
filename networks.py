@@ -534,3 +534,125 @@ def ResNet18ImageNet(channel, num_classes):
 
 def ResNet6ImageNet(channel, num_classes):
     return ResNetImageNet(BasicBlock, [1,1,1,1], channel=channel, num_classes=num_classes)
+
+
+#####################################################################
+# Added by Franz
+#####################################################################
+
+class CrossAttentionFusion(nn.Module):
+    def __init__(self, image_dim, sensor_dim, hidden_dim, num_heads):
+        super(CrossAttentionFusion, self).__init__()
+        self.image_to_sensor_attention = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=num_heads)
+        self.sensor_to_image_attention = nn.MultiheadAttention(embed_dim=hidden_dim, num_heads=num_heads)
+
+        # Linear projections to align feature dimensions
+        self.image_proj = nn.Linear(image_dim, hidden_dim)
+        self.sensor_proj = nn.Linear(sensor_dim, hidden_dim)
+        self.fusion_proj = nn.Linear(2 * hidden_dim, hidden_dim)
+
+    def forward(self, image_features, sensor_features):
+        """
+        image_features: [batch_size, feature_dim]
+        sensor_features: [batch_size, feature_dim]
+        """
+        # Add sequence dimension (required by MultiheadAttention)
+        image_features = image_features.unsqueeze(1)    # [batch_size, 1, image_dim]
+        sensor_features = sensor_features.unsqueeze(1)  # [batch_size, 1, sensor_dim]
+
+        # Project features to hidden_dim
+        image_features = self.image_proj(image_features)     # [batch_size, 1, hidden_dim]
+        sensor_features = self.sensor_proj(sensor_features)  # [batch_size, 1, hidden_dim]
+
+        # Transpose for attention (expected shape: [seq_len, batch_size, hidden_dim])
+        image_features = image_features.transpose(0, 1)    # [1, batch_size, hidden_dim]
+        sensor_features = sensor_features.transpose(0, 1)  # [1, batch_size, hidden_dim]
+
+        # Cross-attention
+        attended_image_to_sensor, _ = self.image_to_sensor_attention(sensor_features, image_features, image_features)
+        attended_sensor_to_image, _ = self.sensor_to_image_attention(image_features, sensor_features, sensor_features)
+
+        # Combine attended features (concatenate and fuse)
+        combined_features = torch.cat([attended_image_to_sensor, attended_sensor_to_image], dim=-1)
+        combined_features = self.fusion_proj(combined_features)  # [1, batch_size, hidden_dim]
+
+        # Remove sequence dimension and transpose back: [batch_size, hidden_dim]
+        return combined_features.squeeze(0)
+    
+
+class MMSConvB(nn.Module):
+    def __init__(self, n_layers_img, n_units_img, n_in_features_sens, n_layers_sens, n_units_sens, n_heads_fusion, n_units_fusion, n_channels, n_classes, unimodal='', im_size=(32,32)):
+        super(MMSConvB, self).__init__()
+
+        self.unimodal = unimodal
+        self.im_size = im_size
+        self.n_groups = 8
+
+        img_layers = [
+            nn.Conv2d(n_channels, n_units_img, kernel_size=9, stride=2, padding=1),
+            nn.ReLU(inplace=True),
+        ]
+        for _ in range(n_layers_img - 2):
+            img_layers.extend([
+                nn.Conv2d(n_units_img, n_units_img, kernel_size=3, stride=1, padding=1),
+                nn.GroupNorm(self.n_groups, n_units_img, affine=True),
+                nn.ReLU(inplace=True)
+            ])
+        img_layers.extend([
+            nn.Conv2d(n_units_img, n_units_img, kernel_size=13, stride=1, padding=0),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d(output_size=(1, 1)),
+            nn.Flatten(),
+        ])
+        self.image_stack = nn.Sequential(*img_layers)
+
+        sens_layer = [
+            nn.Linear(n_in_features_sens, n_units_sens),
+            nn.GroupNorm(self.n_groups, n_units_sens, affine=True),
+            nn.ReLU(),
+            nn.Dropout(),
+        ]
+        for _ in range(n_layers_sens - 1):
+            sens_layer.extend([
+                nn.Linear(n_units_sens, n_units_sens),
+                nn.GroupNorm(self.n_groups, n_units_sens, affine=True), 
+                nn.ReLU(),
+                nn.Dropout(),
+            ])
+        self.sensor_stack = nn.Sequential(*sens_layer)
+
+        # image_dim, sensor_dim, hidden_dim, num_heads
+        self.attn = CrossAttentionFusion(n_units_img, n_units_sens, n_units_fusion, n_heads_fusion)
+
+        self.head = nn.Sequential(
+            nn.Linear(n_units_fusion, n_units_fusion),
+            nn.GroupNorm(self.n_groups, n_units_fusion, affine=True),
+            nn.ReLU(),
+            nn.Dropout(),
+            nn.Linear(n_units_fusion, n_classes)
+        )
+
+    def forward(self, X):        
+        """
+        if self.unimodal == '':
+            img_in, sens_in = X
+        elif self.unimodal == 'image':
+            img_in = X[0]
+            sens_in = torch.zeros((img_in.shape[0], self.sensor_stack[0].in_features)).to(img_in.device)
+        elif self.unimodal == 'sensor':
+            sens_in = X[1]
+            img_in = torch.zeros((sens_in.shape[0], 3, self.im_size[0], self.im_size[1])).to(sens_in.device)
+        else:
+            raise ValueError("Invalid unimodal option.")
+        """
+        img_in = X
+        sens_in = torch.zeros((img_in.shape[0], self.sensor_stack[0].in_features)).to(img_in.device)
+        
+        
+        device = img_in.device
+
+        feature_map_image = self.image_stack(img_in.to(device))
+        feature_map_sensor = self.sensor_stack(sens_in.to(device))
+        fused_features = self.attn(feature_map_image, feature_map_sensor)
+        logits = self.head(fused_features)
+        return logits

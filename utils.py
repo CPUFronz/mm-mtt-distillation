@@ -225,7 +225,7 @@ def get_default_convnet_setting():
 
 
 
-def get_network(model, channel, num_classes, im_size=(32, 32), dist=True):
+def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwargs):
     torch.random.manual_seed(int(time.time() * 1000) % 100000)
     net_width, net_depth, net_act, net_norm, net_pooling = get_default_convnet_setting()
 
@@ -308,6 +308,10 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True):
     elif model == 'ConvNetAP':
         net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling='avgpooling')
 
+    # added by Franz
+    elif model == 'MMSConvB':
+        from networks import MMSConvB
+        net = MMSConvB(n_layers_img=4, n_units_img=32, n_in_features_sens=kwargs['n_in_features_sens'], n_layers_sens=4, n_units_sens=256, n_heads_fusion=4, n_units_fusion=32, n_channels=3, n_classes=num_classes, unimodal=kwargs['unimodal'], im_size=im_size)
 
     else:
         net = None

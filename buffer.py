@@ -66,8 +66,13 @@ def main(args):
 
     for it in range(0, args.num_experts):
 
+        kwargs = {
+            'unimodal': args.unimodal if hasattr(args, 'unimodal') else '',
+            'n_in_features_sens': args.n_input_features if hasattr(args, 'n_input_features') else None
+        }
+
         ''' Train synthetic data '''
-        teacher_net = get_network(args.model, channel, num_classes, im_size).to(args.device) # get a random model
+        teacher_net = get_network(args.model, channel, num_classes, im_size, **kwargs).to(args.device) # get a random model
         teacher_net.train()
         lr = args.lr_teacher
         teacher_optim = torch.optim.SGD(teacher_net.parameters(), lr=lr, momentum=args.mom, weight_decay=args.l2)  # optimizer_img for synthetic data
