@@ -477,3 +477,4 @@ if __name__ == '__main__':
     main(args)
 
 
+# TODO: add missing arguments incl. name for wandb

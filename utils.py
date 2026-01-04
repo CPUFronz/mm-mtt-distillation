@@ -156,9 +156,8 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         args.n_input_features = args.n_sensors * args.n_sensor_features
         args.n_output_features = NUM_STEERING_ANGLES
 
-        sample_image = dst_train[0][0]#[0] #TODO: undo, this now only works because RaspiCarDataset returns only images
-        channel = sample_image.shape[0]
-        im_size = sample_image.shape[1:]
+        channel = 3
+        im_size = args.image_size
         mean = [0.5087, 0.4848, 0.4292]
         std = [0.1729, 0.1907, 0.2188]
         num_classes = NUM_STEERING_ANGLES
