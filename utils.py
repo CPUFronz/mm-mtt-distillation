@@ -758,6 +758,21 @@ SENS_COLS_CAR = ['gyro_x', 'gyro_y', 'gyro_z', 'accel_x', 'accel_y', 'accel_z', 
 NUM_STEERING_ANGLES = 11
 
 
+def fix_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    try:
+        torch.use_deterministic_algorithms(True, warn_only=True)
+    except Exception:
+        pass
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":16:8")
+
+
 def load_raspicar_data(args, root='./data/raspicar/'):
     args.sens_cols = SENS_COLS_CAR
 

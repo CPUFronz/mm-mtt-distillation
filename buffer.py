@@ -7,6 +7,8 @@ from utils import get_dataset, get_network, get_daparam,\
     TensorDataset, epoch, ParamDiffAug
 import copy
 
+from utils import fix_seed  # Added by Franz
+
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -65,12 +67,17 @@ def main(args):
     print('DC augmentation parameters: \n', args.dc_aug_param)
 
     for it in range(0, args.num_experts):
+        #######################################################################
+        # Added by Franz:
+        
+        fix_seed(args.seed + it)
 
         kwargs = {
             'unimodal': args.unimodal if hasattr(args, 'unimodal') else '',
             'n_in_features_sens': args.n_input_features if hasattr(args, 'n_input_features') else None,
             'net_multiplier': args.net_multiplier if hasattr(args, 'net_multiplier') else 1,
         }
+        #######################################################################
 
         ''' Train synthetic data '''
         teacher_net = get_network(args.model, channel, num_classes, im_size, **kwargs).to(args.device) # get a random model
