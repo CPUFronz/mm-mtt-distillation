@@ -147,9 +147,9 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         scaler.fit(df[args.sens_cols])
 
                                                                                 
-        train_data, test_data = train_test_split(df, test_size=args.test_split, random_state=1337)  # TODO: set random_state to args.seed, add args.seed to arguments
-        dst_train = RaspiCarDataset(train_data, scaler, args.sens_cols, args.image_size, 'image')   # TODO: set unimodal to args.unimodal add args.unimodal to arguments
-        dst_test = RaspiCarDataset(test_data, scaler, args.sens_cols, args.image_size, 'image')     # TODO: set unimodal to args.unimodal add args.unimodal to arguments
+        train_data, test_data = train_test_split(df, test_size=args.test_split, random_state=args.seed)
+        dst_train = RaspiCarDataset(train_data, scaler, args.sens_cols, args.image_size, args.unimodal)
+        dst_test = RaspiCarDataset(test_data, scaler, args.sens_cols, args.image_size, args.unimodal)
 
         args.n_sensors = len(SENS_COLS_CAR)
         args.n_sensor_features = 9 # 9 = 1 sensor value + 8 statistical sensor features
@@ -228,6 +228,7 @@ def get_default_convnet_setting():
 def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwargs):
     torch.random.manual_seed(int(time.time() * 1000) % 100000)
     net_width, net_depth, net_act, net_norm, net_pooling = get_default_convnet_setting()
+    net_multiplier = kwargs.get('net_multiplier', 1) or 1
 
     if model == 'MLP':
         net = MLP(channel=channel, num_classes=num_classes)
@@ -311,7 +312,19 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwar
     # added by Franz
     elif model == 'MMSConvB':
         from networks import MMSConvB
-        net = MMSConvB(n_layers_img=4, n_units_img=32, n_in_features_sens=kwargs['n_in_features_sens'], n_layers_sens=4, n_units_sens=256, n_heads_fusion=4, n_units_fusion=32, n_channels=3, n_classes=num_classes, unimodal=kwargs['unimodal'], im_size=im_size)
+        net = MMSConvB(
+            n_layers_img=4,
+            n_units_img=32 * net_multiplier,
+            n_in_features_sens=kwargs.get('n_in_features_sens'),
+            n_layers_sens=4,
+            n_units_sens=256 * net_multiplier,
+            n_heads_fusion=4,
+            n_units_fusion=32 * net_multiplier,
+            n_channels=3,
+            n_classes=num_classes,
+            unimodal=kwargs.get('unimodal', ''),
+            im_size=im_size
+        )
 
     else:
         net = None

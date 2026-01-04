@@ -68,7 +68,8 @@ def main(args):
 
         kwargs = {
             'unimodal': args.unimodal if hasattr(args, 'unimodal') else '',
-            'n_in_features_sens': args.n_input_features if hasattr(args, 'n_input_features') else None
+            'n_in_features_sens': args.n_input_features if hasattr(args, 'n_input_features') else None,
+            'net_multiplier': args.net_multiplier if hasattr(args, 'net_multiplier') else 1,
         }
 
         ''' Train synthetic data '''
@@ -135,7 +136,14 @@ if __name__ == '__main__':
     parser.add_argument('--l2', type=float, default=0, help='l2 regularization')
     parser.add_argument('--save_interval', type=int, default=10)
 
+    #####################################################################
+    # Added by Franz
+    #####################################################################
+    parser.add_argument('--seed', type=int, default=1337, help='set random seed')
+    parser.add_argument('--unimodal', type=str, default='', choices=['', 'image', 'sensor'], help='unimodal training (only for multimodal datasets)')
+    parser.add_argument('--net_multiplier', type=int, default=1, help='network size multiplier')
+
+
     args = parser.parse_args()
     main(args)
-
 
