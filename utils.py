@@ -323,7 +323,8 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwar
             n_channels=3,
             n_classes=num_classes,
             unimodal=kwargs.get('unimodal', ''),
-            im_size=im_size
+            im_size=im_size,
+            n_groups=kwargs.get('n_groups', 8)
         )
 
     else:

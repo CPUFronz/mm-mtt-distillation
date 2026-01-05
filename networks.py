@@ -581,12 +581,12 @@ class CrossAttentionFusion(nn.Module):
     
 
 class MMSConvB(nn.Module):
-    def __init__(self, n_layers_img, n_units_img, n_in_features_sens, n_layers_sens, n_units_sens, n_heads_fusion, n_units_fusion, n_channels, n_classes, unimodal='', im_size=(32,32)):
+    def __init__(self, n_layers_img, n_units_img, n_in_features_sens, n_layers_sens, n_units_sens, n_heads_fusion, n_units_fusion, n_channels, n_classes, unimodal='', im_size=(32,32), n_groups=8):
         super(MMSConvB, self).__init__()
 
         self.unimodal = unimodal
         self.im_size = im_size
-        self.n_groups = 8
+        self.n_groups = n_groups
 
         img_layers = [
             nn.Conv2d(n_channels, n_units_img, kernel_size=9, stride=2, padding=1),

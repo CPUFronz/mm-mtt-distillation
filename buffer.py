@@ -12,7 +12,7 @@ from utils import fix_seed  # Added by Franz
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-def main(args):
+def main(args, trial=None):
 
     args.dsa = True if args.dsa == 'True' else False
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -66,6 +66,8 @@ def main(args):
     args.dc_aug_param['strategy'] = 'crop_scale_rotate'  # for whole-dataset training
     print('DC augmentation parameters: \n', args.dc_aug_param)
 
+    best_acc = 0.0
+
     for it in range(0, args.num_experts):
         #######################################################################
         # Added by Franz:
@@ -76,6 +78,7 @@ def main(args):
             'unimodal': args.unimodal if hasattr(args, 'unimodal') else '',
             'n_in_features_sens': args.n_input_features if hasattr(args, 'n_input_features') else None,
             'net_multiplier': args.net_multiplier if hasattr(args, 'net_multiplier') else 1,
+            'n_groups': args.n_groups if hasattr(args, 'n_groups') else 8,
         }
         #######################################################################
 
@@ -104,6 +107,14 @@ def main(args):
 
             timestamps.append([p.detach().cpu() for p in teacher_net.parameters()])
 
+            best_acc = max(best_acc, test_acc)
+
+            if trial is not None:
+                import optuna  # local import to avoid dependency when not using Optuna
+                trial.report(test_acc, step=e)
+                if trial.should_prune():
+                    raise optuna.exceptions.TrialPruned()
+
             if e in lr_schedule and args.decay:
                 lr *= 0.1
                 teacher_optim = torch.optim.SGD(teacher_net.parameters(), lr=lr, momentum=args.mom, weight_decay=args.l2)
@@ -119,6 +130,7 @@ def main(args):
             torch.save(trajectories, os.path.join(save_dir, "replay_buffer_{}.pt".format(n)))
             trajectories = []
 
+    return best_acc
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Parameter Processing')
@@ -149,8 +161,30 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=1337, help='set random seed')
     parser.add_argument('--unimodal', type=str, default='', choices=['', 'image', 'sensor'], help='unimodal training (only for multimodal datasets)')
     parser.add_argument('--net_multiplier', type=int, default=1, help='network size multiplier')
+    parser.add_argument('--n_groups', type=int, default=8, help='group norm groups (for MMSConvB)')
+    parser.add_argument('--optuna_trials', type=int, default=0, help='number of optuna trials to run (0 disables search)')
 
 
     args = parser.parse_args()
-    main(args)
 
+    if args.optuna_trials > 0:
+        import optuna
+        def objective(trial):
+            trial_args = copy.deepcopy(args)
+            trial_args.batch_train = trial.suggest_categorical('batch_size', [64, 128, 256, 512])
+            trial_args.batch_real = trial_args.batch_train
+            trial_args.n_groups = trial.suggest_categorical('n_groups', [1, 2, 4, 8, 16, 32])
+            trial_args.train_epochs = trial.suggest_categorical('epochs', [50, 100])
+            trial_args.net_multiplier = trial.suggest_categorical('net_multiplier', [1, 2])
+            trial_args.lr_teacher = trial.suggest_float('lr', 1e-4, 1e-1, log=True)
+            return main(trial_args, trial)
+
+        storage = f"sqlite:///optuna_results.db"
+        pruner = optuna.pruners.MedianPruner(n_warmup_steps=25)
+        study = optuna.create_study(direction='maximize', pruner=pruner, storage=storage, load_if_exists=True, study_name='MMSConvB_RaspiCar_Unimodal')
+        study.optimize(objective, n_trials=args.optuna_trials)
+        print(f"Best value: {study.best_value}")
+        print(f"Best params: {study.best_params}")
+        print(f"Optuna results stored in {storage}")
+    else:
+        main(args)
