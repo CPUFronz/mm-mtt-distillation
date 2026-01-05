@@ -77,7 +77,6 @@ def main(args, trial=None):
         kwargs = {
             'unimodal': args.unimodal if hasattr(args, 'unimodal') else '',
             'n_in_features_sens': args.n_input_features if hasattr(args, 'n_input_features') else None,
-            'net_multiplier': args.net_multiplier if hasattr(args, 'net_multiplier') else 1,
             'n_groups': args.n_groups if hasattr(args, 'n_groups') else 8,
         }
         #######################################################################
@@ -160,7 +159,6 @@ if __name__ == '__main__':
     #####################################################################
     parser.add_argument('--seed', type=int, default=1337, help='set random seed')
     parser.add_argument('--unimodal', type=str, default='', choices=['', 'image', 'sensor'], help='unimodal training (only for multimodal datasets)')
-    parser.add_argument('--net_multiplier', type=int, default=1, help='network size multiplier')
     parser.add_argument('--n_groups', type=int, default=8, help='group norm groups (for MMSConvB)')
     parser.add_argument('--optuna_trials', type=int, default=0, help='number of optuna trials to run (0 disables search)')
 
@@ -175,7 +173,6 @@ if __name__ == '__main__':
             trial_args.batch_real = trial_args.batch_train
             trial_args.n_groups = trial.suggest_categorical('n_groups', [1, 2, 4, 8, 16, 32])
             trial_args.train_epochs = trial.suggest_categorical('epochs', [50, 100])
-            trial_args.net_multiplier = trial.suggest_categorical('net_multiplier', [1, 2])
             trial_args.lr_teacher = trial.suggest_float('lr', 1e-4, 1e-1, log=True)
             return main(trial_args, trial)
 
