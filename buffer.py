@@ -8,6 +8,7 @@ from utils import get_dataset, get_network, get_daparam,\
 import copy
 
 from utils import fix_seed  # Added by Franz
+import wandb                # Added by Franz
 
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -71,53 +72,77 @@ def main(args, trial=None):
     for it in range(0, args.num_experts):
         #######################################################################
         # Added by Franz:
+        #######################################################################
         
         fix_seed(args.seed + it)
+
+        run_config = dict(vars(args))
+        run_config['expert_iteration'] = it
+        wandb_kwargs = {
+            'config': run_config,
+            'reinit': True,
+            'name': args.name,
+            'project': 'DatasetDistillation_Training',
+        }
 
         kwargs = {
             'unimodal': args.unimodal if hasattr(args, 'unimodal') else '',
             'n_in_features_sens': args.n_input_features if hasattr(args, 'n_input_features') else None,
             'n_groups': args.n_groups if hasattr(args, 'n_groups') else 8,
         }
+
+        with wandb.init(**wandb_kwargs):
         #######################################################################
 
-        ''' Train synthetic data '''
-        teacher_net = get_network(args.model, channel, num_classes, im_size, **kwargs).to(args.device) # get a random model
-        teacher_net.train()
-        lr = args.lr_teacher
-        teacher_optim = torch.optim.SGD(teacher_net.parameters(), lr=lr, momentum=args.mom, weight_decay=args.l2)  # optimizer_img for synthetic data
-        teacher_optim.zero_grad()
+            ''' Train synthetic data '''
+            teacher_net = get_network(args.model, channel, num_classes, im_size, **kwargs).to(args.device) # get a random model
+            teacher_net.train()
+            lr = args.lr_teacher
+            teacher_optim = torch.optim.SGD(teacher_net.parameters(), lr=lr, momentum=args.mom, weight_decay=args.l2)  # optimizer_img for synthetic data
+            teacher_optim.zero_grad()
 
-        timestamps = []
-
-        timestamps.append([p.detach().cpu() for p in teacher_net.parameters()])
-
-        lr_schedule = [args.train_epochs // 2 + 1]
-
-        for e in range(args.train_epochs):
-
-            train_loss, train_acc = epoch("train", dataloader=trainloader, net=teacher_net, optimizer=teacher_optim,
-                                        criterion=criterion, args=args, aug=True)
-
-            test_loss, test_acc = epoch("test", dataloader=testloader, net=teacher_net, optimizer=None,
-                                        criterion=criterion, args=args, aug=False)
-
-            print("Itr: {}\tEpoch: {}\tTrain Acc: {}\tTest Acc: {}".format(it, e, train_acc, test_acc))
+            timestamps = []
 
             timestamps.append([p.detach().cpu() for p in teacher_net.parameters()])
 
-            best_acc = max(best_acc, test_acc)
+            lr_schedule = [args.train_epochs // 2 + 1]
 
-            if trial is not None:
-                import optuna  # local import to avoid dependency when not using Optuna
-                trial.report(test_acc, step=e)
-                if trial.should_prune():
-                    raise optuna.exceptions.TrialPruned()
+            for e in range(args.train_epochs):
 
-            if e in lr_schedule and args.decay:
-                lr *= 0.1
-                teacher_optim = torch.optim.SGD(teacher_net.parameters(), lr=lr, momentum=args.mom, weight_decay=args.l2)
-                teacher_optim.zero_grad()
+                train_loss, train_acc = epoch("train", dataloader=trainloader, net=teacher_net, optimizer=teacher_optim,
+                                            criterion=criterion, args=args, aug=True)
+
+                test_loss, test_acc = epoch("test", dataloader=testloader, net=teacher_net, optimizer=None,
+                                            criterion=criterion, args=args, aug=False)
+
+                print("Itr: {}\tEpoch: {}\tTrain Acc: {}\tTest Acc: {}".format(it, e, train_acc, test_acc))
+
+                timestamps.append([p.detach().cpu() for p in teacher_net.parameters()])
+
+                #######################################################################
+                # Added by Franz:
+                #######################################################################
+                
+                wandb.log({
+                    'train_loss': float(train_loss),
+                    'train_acc': float(train_acc),
+                    'test_loss': float(test_loss),
+                    'test_acc': float(test_acc),
+                }, step=e)
+
+                best_acc = max(best_acc, test_acc)
+
+                if trial is not None:
+                    import optuna  # local import to avoid dependency when not using Optuna
+                    trial.report(test_acc, step=e)
+                    if trial.should_prune():
+                        raise optuna.exceptions.TrialPruned()
+                #######################################################################
+
+                if e in lr_schedule and args.decay:
+                    lr *= 0.1
+                    teacher_optim = torch.optim.SGD(teacher_net.parameters(), lr=lr, momentum=args.mom, weight_decay=args.l2)
+                    teacher_optim.zero_grad()
 
         trajectories.append(timestamps)
 
@@ -161,7 +186,7 @@ if __name__ == '__main__':
     parser.add_argument('--unimodal', type=str, default='', choices=['', 'image', 'sensor'], help='unimodal training (only for multimodal datasets)')
     parser.add_argument('--n_groups', type=int, default=8, help='group norm groups (for MMSConvB)')
     parser.add_argument('--optuna_trials', type=int, default=0, help='number of optuna trials to run (0 disables search)')
-
+    parser.add_argument('--name', type=str, default='TrainingRun', help='name of wandb run')
 
     args = parser.parse_args()
 
