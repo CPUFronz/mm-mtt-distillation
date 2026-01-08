@@ -12,6 +12,8 @@ import copy
 import random
 from reparam_module import ReparamModule
 
+from utils import fix_seed  # Added by Franz
+
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -57,11 +59,13 @@ def main(args):
     else:
         zca_trans = None
 
-    wandb.init(sync_tensorboard=False,
-               project="DatasetDistillation",
-               job_type="CleanRepo",
-               config=args,
-               )
+    wandb.init(
+        sync_tensorboard=False,
+        project="DatasetDistillation",
+        job_type="CleanRepo",
+        config=args,
+        name=args.name
+    )
 
     args = type('', (), {})()
 
@@ -185,6 +189,18 @@ def main(args):
     for it in range(0, args.Iteration+1):
         save_this_it = False
 
+        #######################################################################
+        # Added by Franz:
+        
+        fix_seed(args.seed + it)
+
+        kwargs = {
+            'unimodal': args.unimodal if hasattr(args, 'unimodal') else '',
+            'n_in_features_sens': args.n_input_features if hasattr(args, 'n_input_features') else None,
+            'n_groups': args.n_groups if hasattr(args, 'n_groups') else 8,
+        }
+        #######################################################################
+
         # writer.add_scalar('Progress', it, it)
         wandb.log({"Progress": it}, step=it)
         ''' Evaluate synthetic data '''
@@ -200,7 +216,7 @@ def main(args):
                 accs_test = []
                 accs_train = []
                 for it_eval in range(args.num_eval):
-                    net_eval = get_network(model_eval, channel, num_classes, im_size).to(args.device) # get a random model
+                    net_eval = get_network(model_eval, channel, num_classes, im_size, **kwargs).to(args.device) # get a random model
 
                     eval_labs = label_syn
                     with torch.no_grad():
@@ -291,7 +307,7 @@ def main(args):
 
         wandb.log({"Synthetic_LR": syn_lr.detach().cpu()}, step=it)
 
-        student_net = get_network(args.model, channel, num_classes, im_size, dist=False).to(args.device)  # get a random model
+        student_net = get_network(args.model, channel, num_classes, im_size, dist=False, **kwargs).to(args.device)  # get a random model
 
         student_net = ReparamModule(student_net)
 
@@ -472,9 +488,18 @@ if __name__ == '__main__':
 
     parser.add_argument('--force_save', action='store_true', help='this will save images for 50ipc')
 
+    
+    #####################################################################
+    # Added by Franz
+    #####################################################################
+
+    parser.add_argument('--seed', type=int, default=1337, help='set random seed')
+    parser.add_argument('--unimodal', type=str, default='', choices=['', 'image', 'sensor'], help='unimodal training (only for multimodal datasets)')
+    parser.add_argument('--n_groups', type=int, default=8, help='group norm groups (for MMSConvB)')
+    parser.add_argument('--name', type=str, default='', help='name for wandb run')
+    
+    #####################################################################
+
     args = parser.parse_args()
 
     main(args)
-
-
-# TODO: add missing arguments incl. name for wandb
