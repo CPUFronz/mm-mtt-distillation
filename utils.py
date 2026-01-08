@@ -314,16 +314,16 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwar
         net = MMSConvB(
             n_layers_img=4,
             n_units_img=64,
-            n_in_features_sens=kwargs.get('n_in_features_sens'),
+            n_in_features_sens=kwargs['n_in_features_sens'],
             n_layers_sens=4,
             n_units_sens=512,
             n_heads_fusion=4,
             n_units_fusion=64,
             n_channels=3,
             n_classes=num_classes,
-            unimodal=kwargs.get('unimodal', ''),
+            unimodal=kwargs['unimodal'],
             im_size=im_size,
-            n_groups=kwargs.get('n_groups', 8)
+            n_groups=kwargs['n_groups']
         )
 
     else:
