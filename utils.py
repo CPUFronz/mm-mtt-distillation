@@ -170,32 +170,54 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         exit('unknown dataset: %s'%dataset)
 
     if args.zca:
+        #####################################################################
+        # modified by Franz
+        #####################################################################
         images = []
+        sensors = []
         labels = []
         print("Train ZCA")
         for i in tqdm.tqdm(range(len(dst_train))):
-            im, lab = dst_train[i]
+            if args.unimodal == 'model':
+                im, lab = dst_train[i]
+            else:
+                (im, sen), lab = dst_train[i]
+                sensors.append(sen)
             images.append(im)
             labels.append(lab)
-        images = torch.stack(images, dim=0).to(args.device)
-        labels = torch.tensor(labels, dtype=torch.long, device="cpu")
+        images = torch.stack(images, dim=0).to('cpu')
+        sensors = torch.stack(sensors, dim=0).to('cpu')
+        labels = torch.tensor(labels, dtype=torch.long).to('cpu')
         zca = K.enhance.ZCAWhitening(eps=0.1, compute_inv=True)
         zca.fit(images)
-        zca_images = zca(images).to("cpu")
-        dst_train = TensorDataset(zca_images, labels)
+        zca_images = zca(images).to('cpu')
+        if args.unimodal == 'model':
+            dst_train = TensorDataset(zca_images, labels)
+        else:
+            dst_train = MultimodalTensorDataset(zca_images, sensors, labels)
 
         images = []
         labels = []
+        sensors = []
         print("Test ZCA")
         for i in tqdm.tqdm(range(len(dst_test))):
-            im, lab = dst_test[i]
+            if args.unimodal == 'model':
+                im, lab = dst_test[i]
+            else:
+                (im, sen), lab = dst_test[i]
+                sensors.append(sen)
             images.append(im)
             labels.append(lab)
-        images = torch.stack(images, dim=0).to(args.device)
-        labels = torch.tensor(labels, dtype=torch.long, device="cpu")
+        images = torch.stack(images, dim=0).to('cpu')
+        sensors = torch.stack(sensors, dim=0).to('cpu')
+        labels = torch.tensor(labels, dtype=torch.long).to('cpu')
 
-        zca_images = zca(images).to("cpu")
-        dst_test = TensorDataset(zca_images, labels)
+        zca_images = zca(images).to('cpu')
+        if args.unimodal == 'model':
+            dst_test = TensorDataset(zca_images, labels)
+        else:
+            dst_test = MultimodalTensorDataset(zca_images, sensors, labels)
+        #####################################################################
 
         args.zca_trans = zca
 
@@ -364,9 +386,18 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
     else:
         net.eval()
 
+    #####################################################################
+    # modified by Franz
+    #####################################################################
     for i_batch, datum in enumerate(dataloader):
-        img = datum[0].float().to(args.device)
-        lab = datum[1].long().to(args.device)
+        if args.unimodal == 'model':
+            img = datum[0].float().to(args.device)
+            lab = datum[1].long().to(args.device)
+        else:
+            img, sen = datum[0]
+            img = img.float().to(args.device)
+            sen = sen.float().to(args.device)
+            lab = datum[1].long().to(args.device)
 
         if mode == "train" and texture:
             img = torch.cat([torch.stack([torch.roll(im, (torch.randint(args.im_size[0]*args.canvas_size, (1,)), torch.randint(args.im_size[0]*args.canvas_size, (1,))), (1,2))[:,:args.im_size[0],:args.im_size[1]] for im in img]) for _ in range(args.canvas_samples)])
@@ -383,7 +414,11 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
 
         n_b = lab.shape[0]
 
-        output = net(img)
+        if args.unimodal == 'model':
+            output = net(img)
+        else:
+            output = net((img, sen))
+        #####################################################################
         loss = criterion(output, lab)
 
         acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
@@ -777,6 +812,19 @@ def fix_seed(seed):
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":16:8")
 
 
+class MultimodalTensorDataset(Dataset):
+    def __init__(self, images, sensors, labels):
+        self.images = images.detach().float()
+        self.sensors = sensors.detach().float()
+        self.labels = labels.detach()
+
+    def __getitem__(self, index):
+        return (self.images[index], self.sensors[index]), self.labels[index]
+
+    def __len__(self):
+        return self.labels.shape[0]
+
+
 def load_raspicar_data(args, root='./data/raspicar/'):
     args.sens_cols = SENS_COLS_CAR
 
@@ -856,13 +904,14 @@ class RaspiCarDataset(Dataset):
             image = torch.zeros((3, self.image_size[0], self.image_size[1]))
 
         if self.unimodal != 'image':
-            sensor_data = self.sensor_data_scaled[idx , :].astype(np.float32)
+            sensor_data = torch.Tensor(self.sensor_data_scaled[idx , :].astype(np.float32))
         else:
             sensor_data = torch.zeros((len(self.scaler.feature_names_in_),))
 
         label = row['steering_angle']
 
-        # TODO: revert
-        # return (image, sensor_data), label
-        return image, label
+        if self.unimodal == 'model':
+            return image, label
+        else:
+            return (image, sensor_data), label
     

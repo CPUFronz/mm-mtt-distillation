@@ -40,17 +40,25 @@ def main(args, trial=None):
     #######################################################################
     ''' organize the real dataset '''
     images_all = []
+    sensor_all = []
     labels_all = []
     indices_class = [[] for c in range(num_classes)]
     print("BUILDING DATASET")
     for i in tqdm(range(len(dst_train))):
-        sample = dst_train[i]
-        images_all.append(torch.unsqueeze(sample[0], dim=0))
-        labels_all.append(class_map[torch.tensor(sample[1]).item()])
+        if args.unimodal == 'model':
+            sample = dst_train[i]
+            images_all.append(torch.unsqueeze(sample[0], dim=0))
+            labels_all.append(class_map[torch.tensor(sample[1]).item()])
+        else:
+            sample = dst_train[i]
+            images_all.append(torch.unsqueeze(sample[0][0], dim=0))
+            sensor_all.append(torch.unsqueeze(sample[0][1], dim=0))
+            labels_all.append(class_map[torch.tensor(sample[1]).item()])
 
     for i, lab in tqdm(enumerate(labels_all)):
         indices_class[lab].append(i)
     images_all = torch.cat(images_all, dim=0).to("cpu")
+    sensor_all = torch.cat(sensor_all, dim=0).to("cpu")
     labels_all = torch.tensor(labels_all, dtype=torch.long, device="cpu")
 
     for c in range(num_classes):
@@ -63,8 +71,12 @@ def main(args, trial=None):
 
     trajectories = []
 
-    dst_train = TensorDataset(copy.deepcopy(images_all.detach()), copy.deepcopy(labels_all.detach()))
+    if args.unimodal == 'model':
+        dst_train = TensorDataset(copy.deepcopy(images_all.detach()), copy.deepcopy(labels_all.detach()))
+    else:
+        dst_train = MultimodalTensorDataset(copy.deepcopy(images_all.detach()), copy.deepcopy(sensor_all.detach()), copy.deepcopy(labels_all.detach()))
     trainloader = torch.utils.data.DataLoader(dst_train, batch_size=args.batch_train, shuffle=True, num_workers=0)
+    #######################################################################
 
     ''' set augmentation for whole-dataset training '''
     args.dc_aug_param = get_daparam(args.dataset, args.model, args.model, None)
@@ -194,6 +206,9 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    if args.model not in ['MMSConvB']:
+        args.unimodal = 'model'  # used by multimodal datasets, to only provide images for unimodal models
+
     if args.optuna_trials > 0:
         import optuna
         def objective(trial):
@@ -207,6 +222,8 @@ if __name__ == '__main__':
 
         storage = f"sqlite:///optuna_results.db"
         pruner = optuna.pruners.MedianPruner(n_warmup_steps=25)
+        # TODO: make name adjustable
+        # TODO: deactivate wandb inside optuna trials
         study = optuna.create_study(direction='maximize', pruner=pruner, storage=storage, load_if_exists=True, study_name='MMSConvB_RaspiCar_Unimodal')
         study.optimize(objective, n_trials=args.optuna_trials)
         print(f"Best value: {study.best_value}")

@@ -633,7 +633,6 @@ class MMSConvB(nn.Module):
         )
 
     def forward(self, X):        
-        """
         if self.unimodal == '':
             img_in, sens_in = X
         elif self.unimodal == 'image':
@@ -644,9 +643,6 @@ class MMSConvB(nn.Module):
             img_in = torch.zeros((sens_in.shape[0], 3, self.im_size[0], self.im_size[1])).to(sens_in.device)
         else:
             raise ValueError("Invalid unimodal option.")
-        """
-        img_in = X
-        sens_in = torch.zeros((img_in.shape[0], self.sensor_stack[0].in_features)).to(img_in.device)
         
         
         device = img_in.device
