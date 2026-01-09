@@ -537,7 +537,7 @@ def ResNet6ImageNet(channel, num_classes):
 
 
 #####################################################################
-# Added by Franz
+# added by Franz
 #####################################################################
 
 class CrossAttentionFusion(nn.Module):

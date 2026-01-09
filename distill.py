@@ -12,7 +12,7 @@ import copy
 import random
 from reparam_module import ReparamModule
 
-from utils import fix_seed  # Added by Franz
+from utils import fix_seed  # added by Franz
 
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -190,7 +190,8 @@ def main(args):
         save_this_it = False
 
         #######################################################################
-        # Added by Franz:
+        # added by Franz
+        #######################################################################
         
         fix_seed(args.seed + it)
 
@@ -490,7 +491,7 @@ if __name__ == '__main__':
 
     
     #####################################################################
-    # Added by Franz
+    # added by Franz
     #####################################################################
 
     parser.add_argument('--seed', type=int, default=1337, help='set random seed')

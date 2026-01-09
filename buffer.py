@@ -7,8 +7,10 @@ from utils import get_dataset, get_network, get_daparam,\
     TensorDataset, epoch, ParamDiffAug
 import copy
 
-from utils import fix_seed  # Added by Franz
-import wandb                # Added by Franz
+
+from utils import fix_seed, MultimodalTensorDataset # added by Franz
+import wandb                                        # added by Franz
+
 
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -33,7 +35,9 @@ def main(args, trial=None):
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-
+    #######################################################################
+    # modified by Franz:
+    #######################################################################
     ''' organize the real dataset '''
     images_all = []
     labels_all = []
@@ -71,7 +75,7 @@ def main(args, trial=None):
 
     for it in range(0, args.num_experts):
         #######################################################################
-        # Added by Franz:
+        # added by Franz:
         #######################################################################
         
         fix_seed(args.seed + it)
@@ -120,7 +124,7 @@ def main(args, trial=None):
                 timestamps.append([p.detach().cpu() for p in teacher_net.parameters()])
 
                 #######################################################################
-                # Added by Franz:
+                # added by Franz:
                 #######################################################################
                 
                 wandb.log({
@@ -180,7 +184,7 @@ if __name__ == '__main__':
     parser.add_argument('--save_interval', type=int, default=10)
 
     #####################################################################
-    # Added by Franz
+    # added by Franz
     #####################################################################
     parser.add_argument('--seed', type=int, default=1337, help='set random seed')
     parser.add_argument('--unimodal', type=str, default='', choices=['', 'image', 'sensor'], help='unimodal training (only for multimodal datasets)')

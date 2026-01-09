@@ -133,7 +133,7 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
 
     
     #####################################################################
-    # Added by Franz
+    # added by Franz
     #####################################################################
 
     elif dataset == 'RaspiCar':
@@ -164,6 +164,7 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         class_names = [str(i) for i in range(num_classes)]
         class_map = {x: x for x in range(num_classes)}
         class_map_inv = None
+    #####################################################################
 
     else:
         exit('unknown dataset: %s'%dataset)
@@ -308,7 +309,9 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwar
     elif model == 'ConvNetAP':
         net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling='avgpooling')
 
+    #####################################################################
     # added by Franz
+    #####################################################################
     elif model == 'MMSConvB':
         from networks import MMSConvB
         net = MMSConvB(
@@ -325,6 +328,7 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwar
             im_size=im_size,
             n_groups=kwargs['n_groups']
         )
+    #####################################################################
 
     else:
         net = None
@@ -728,7 +732,7 @@ AUGMENT_FNS = {
 
 
 #####################################################################
-# Added by Franz
+# added by Franz
 #####################################################################
 
 import os
