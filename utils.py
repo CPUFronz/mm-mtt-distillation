@@ -164,6 +164,46 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         class_names = [str(i) for i in range(num_classes)]
         class_map = {x: x for x in range(num_classes)}
         class_map_inv = None
+
+    elif dataset == 'ActionSense':
+        args.window_size = 10
+        args.test_split = 0.2
+        args.image_size = (32, 32)
+
+        df, images, _ = load_actionsense_data(args)
+        df = (
+            df.groupby('label', group_keys=False)
+                .apply(lambda g: g.sample(n=min(ACTIONSENSE_SAMPLES_PER_LABEL, len(g)), random_state=0)) # always use the same subset of data
+                .reset_index(drop=True)
+        )
+
+        args.sens_cols = df.columns.drop(['label', 'subject', 'video_id', 'video_frame'])
+
+        scaler = StandardScaler()
+        scaler.fit(df[args.sens_cols])
+
+        encoder = LabelEncoder()
+        encoder.fit(df['label'])
+        df['label'] = encoder.transform(df['label'])
+
+        train_data, test_data = train_test_split(df, test_size=args.test_split, random_state=args.seed)
+        dst_train = ActionSenseDataset(train_data, images, scaler, args.sens_cols, args.image_size, args.unimodal)
+        dst_test = ActionSenseDataset(test_data, images, scaler, args.sens_cols, args.image_size, args.unimodal)
+
+        args.n_sensors = len(args.sens_cols)
+        args.n_sensor_features = 1
+        args.n_input_features = args.n_sensors * args.n_sensor_features
+        args.n_output_features = df['label'].nunique()
+
+        sample_image = dst_train[0][0][0]
+        channel = sample_image.shape[0]
+        im_size = sample_image.shape[1:]
+        mean = [0.20614147, 0.33670203, 0.33101761]
+        std = [0.15099436, 0.23058386, 0.23078493]
+        num_classes = df['label'].nunique()
+        class_names = encoder.classes_.tolist()
+        class_map = {x: encoder.classes_[x] for x in range(num_classes)}
+        class_map_inv = None
     #####################################################################
 
     else:
@@ -817,6 +857,7 @@ from PIL import Image
 
 SENS_COLS_CAR = ['gyro_x', 'gyro_y', 'gyro_z', 'accel_x', 'accel_y', 'accel_z', 'tof']
 NUM_STEERING_ANGLES = 11
+ACTIONSENSE_SAMPLES_PER_LABEL = 2500
 
 
 def fix_seed(seed):
@@ -937,3 +978,158 @@ class RaspiCarDataset(Dataset):
         else:
             return (image, sensor_data), label
     
+
+def load_actionsense_data(args, root='./data/actionsense/'):
+    pickled_fn = f'{root}/actionsense_data_cache.pkl'
+    if os.path.exists(pickled_fn):
+        print('Loading existing ActionSense data from cache...')
+        data = joblib.load(pickled_fn)
+        assert data['metadata']['img_size'] == args.image_size, "Cached data image size does not match the specified image size."
+        return data['dataframe'], data['video_frames'], data['metadata']
+
+    full_start = time.time()
+    print('Processing ActionSense data...')
+
+    activity_df_list = []
+    video_frames = defaultdict(dict)
+
+    for fn in sorted(glob(f'{root}/*.hdf5')):
+        print(f'Processing {fn}...')
+
+        subject_id = int(fn.split('_')[-1].split('.')[0].strip('S'))
+        prefix = fn.split('_')[0] + '_' + fn.split('_')[1]
+
+        for pfx in glob(f'{root}/*.avi'):
+            if pfx.startswith(prefix):
+                video_fn = pfx
+                break
+        
+        hdf_file = h5py.File(fn, 'r')
+        video_ts = hdf_file['eye-tracking-video-worldGaze/frame_timestamp/time_s'][:].flatten()
+        video_frame_nr = np.array([i for i in range(len(video_ts))])
+
+        activities = hdf_file['experiment-activities/activities/data']
+        for idx, activity in tqdm.tqdm(enumerate(activities), total=len(activities)):
+            label, time_mark, quality, notes = activity.astype('U').tolist()
+            # only use good quality data and get data between start and end
+            if quality != 'Good' or time_mark == 'Stop':
+                continue
+            
+            start_time = hdf_file['experiment-activities/activities/time_s'][idx].item()
+            end_time = hdf_file['experiment-activities/activities/time_s'][idx+1].item()
+
+            video_mask = (video_ts >= start_time) & (video_ts <= end_time)
+            video_ts_clipped = video_ts[video_mask]
+            video_frame_nr_clipped = video_frame_nr[video_mask]
+
+            activity_sensors_dict = {}
+
+            for k in hdf_file:
+                # skip experiment metadata 
+                if k.startswith('experiment-') or k.startswith('eye-tracking-video-'):
+                    continue
+                # and groups for precise timing, we use a rather coarse temporal resolution
+                if k == 'eye-tracking-time' or k == 'xsens-time':
+                    continue
+                # skip calibration groups
+                if '-calibration-' in k:
+                    continue
+                # skip tactile glove data, since not all subjects have this data
+                if k == 'tactile-glove-left' or k == 'tactile-glove-right':
+                    continue
+                
+                ignored_fields = [
+                    # ignore fields that are not sensor measurements
+                    'battery', 'emg', 'gesture', 'rssi', 'synced', 'timestamp',
+                    # ignore fields, which are not available for all subjects
+                    'rotation_xzy_deg', 'rotation_zxy_deg', 'orientation_euler_deg', 'orientation_quaternion', 'position_cm'
+                ]
+                for l in hdf_file[k]:
+                    if l in ignored_fields:
+                        continue
+                    
+                    full_key = f'{k}/{l}'
+                    timestamps = hdf_file[full_key]['time_s'][:].flatten()
+                    mask = (timestamps >= start_time) & (timestamps <= end_time)
+
+                    data = hdf_file[full_key + '/data'][:][mask]
+
+                    flattend_dim = np.prod(data.shape[1:])
+                    for d in range(flattend_dim):
+                        ts_index = timestamps[mask]
+                        data_col = data.reshape(data.shape[0], -1)[:, d]
+                        tmp_df = pd.DataFrame({'timestamp': ts_index, f'{full_key}__{d}': data_col}).set_index('timestamp')
+                        tmp_df = tmp_df.groupby(level=0).mean() # some timestamps are duplicated, and have different measturements associated with them
+                        tmp_df = tmp_df.reindex(video_ts_clipped, method='nearest', tolerance=0.01)  # reindex to synchronize with video
+                        activity_sensors_dict[f'{full_key}_{d}'] = tmp_df
+            
+            activity_df = pd.concat(activity_sensors_dict.values(), axis=1).assign(label=label, subject=subject_id)
+            activity_df['video_id'] = prefix
+            activity_df['video_frame'] = video_frame_nr_clipped
+            with warnings.catch_warnings(action="ignore"):
+                activity_df = activity_df.interpolate(limit=10).dropna()
+            activity_df_list.append(activity_df)
+
+            cap = cv2.VideoCapture(video_fn)
+            for frame_idx in activity_df['video_frame']:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                _, frame = cap.read()
+                resized_frame = cv2.resize(frame, (args.image_size[0], args.image_size[1]),interpolation=cv2.INTER_AREA)
+                video_frames[prefix][frame_idx] = resized_frame
+            cap.release()
+
+    df = pd.concat(activity_df_list, axis=0)
+    data = {
+        'dataframe': df,
+        'video_frames': video_frames,
+        'metadata': {
+            'img_size': args.image_size
+        }
+    }
+    joblib.dump(data, pickled_fn)
+
+    print(df.shape)
+    print(f'Took: {(time.time() - full_start)/60:.4f} minutes')
+
+    return data['dataframe'], data['video_frames'], data['metadata']
+
+
+class ActionSenseDataset(Dataset):
+    def __init__(self, df, video_frames, scaler, sens_cols, image_size=(64, 64), unimodal=''):
+        df = df.reset_index(drop=True)
+        self.video_frames = video_frames
+        self.image_size = image_size
+        self.unimodal = unimodal
+
+        # Keep frequently used columns/values as arrays to avoid pandas overhead in __getitem__
+        self.video_ids = df['video_id'].to_numpy()
+        self.frame_idxs = df['video_frame'].to_numpy(dtype=np.int64)
+        self.labels = torch.as_tensor(df['label'].to_numpy(), dtype=torch.long)
+
+        self.sens_cols = sens_cols
+        sensor_np = scaler.transform(df[self.sens_cols]).astype(np.float32)
+        self.sensor_data = torch.from_numpy(sensor_np)
+
+        # Cache frame references to reduce dict lookups during iteration
+        self.frames = [self.video_frames[v_id][int(f_idx)] for v_id, f_idx in zip(self.video_ids, self.frame_idxs)]
+
+        self.zero_sensor = torch.zeros(len(self.sens_cols), dtype=torch.float32)
+        self.n_classes = len(np.unique(self.labels))
+
+    def __len__(self):
+        return len(self.labels)
+
+    def __getitem__(self, idx):
+        if self.unimodal != 'sensor':
+            frame = self.frames[idx]
+            # Frames are already resized during preprocessing; convert directly to CHW float tensor
+            image = torch.from_numpy(frame).permute(2, 0, 1).float().div_(255)
+        else:
+            image = torch.zeros((3, *self.image_size), dtype=torch.float32)
+
+        if self.unimodal != 'image':
+            sensor_data = self.sensor_data[idx]
+        else:
+            sensor_data = self.zero_sensor
+
+        return (image, sensor_data), self.labels[idx]
