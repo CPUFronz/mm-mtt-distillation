@@ -103,8 +103,11 @@ def main(args, trial=None):
 
         kwargs = {
             'unimodal': args.unimodal if hasattr(args, 'unimodal') else '',
-            'n_in_features_sens': args.n_input_features if hasattr(args, 'n_input_features') else None,
             'n_groups': args.n_groups if hasattr(args, 'n_groups') else 8,
+            # TODO: MMSConvB so modifizieren, dass es auch n_sensors * n_sensor_features akzeptiert
+            'n_in_features_sens': args.n_input_features if hasattr(args, 'n_input_features') else None,
+            'n_sensors': args.n_sensors if hasattr(args, 'n_sensors') else None,
+            'n_sensor_features': args.n_sensor_features if hasattr(args, 'n_sensor_features') else None
         }
 
         with wandb.init(**wandb_kwargs):
@@ -206,7 +209,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    if args.model not in ['MMSConvB']:
+    if args.model not in ['MMSConvB', 'Perceiver']:
         args.unimodal = 'model'  # used by multimodal datasets, to only provide images for unimodal models
 
     if args.optuna_trials > 0:

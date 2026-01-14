@@ -350,6 +350,21 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwar
             im_size=im_size,
             n_groups=kwargs['n_groups']
         )
+    elif model == 'Perceiver':
+        from networks import MultimodalPerceiver
+        net = MultimodalPerceiver(
+            img_size=im_size,
+            n_sensors=kwargs['n_sensors'],
+            n_sensor_features=kwargs['n_sensor_features'],
+            num_classes=num_classes,
+            latent_dim=32,
+            token_dim=128,
+            num_lat=128,
+            depth=3,
+            cross_heads=1,
+            latent_heads=8,
+            seq_dropout_prob=0.2
+        )
     #####################################################################
 
     else:

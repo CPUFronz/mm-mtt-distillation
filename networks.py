@@ -652,3 +652,138 @@ class MMSConvB(nn.Module):
         fused_features = self.attn(feature_map_image, feature_map_sensor)
         logits = self.head(fused_features)
         return logits
+
+
+import math, torch, torch.nn as nn
+from perceiver_pytorch import PerceiverIO              # backbone
+
+# ---------- fourier utilities ----------
+def fourier_encode(x, max_freq, num_bands=6):
+    dims = x.shape[-1]
+    scales = torch.logspace(0., math.log(max_freq / 2, 2),
+                            num_bands, base=2., device=x.device)
+    enc = (x[..., None] * scales).reshape(*x.shape[:-1], -1)
+    return torch.cat((x, torch.sin(enc), torch.cos(enc)), dim=-1)
+
+# ---------- input adapters ----------
+class ImageInputAdapter(nn.Module):
+    def __init__(self, img_size=224, patch=16, in_ch=3, embed=128, bands=6, max_freq=10.):
+        super().__init__()
+        gh, gw = img_size // patch, img_size // patch
+        self.proj = nn.Linear(in_ch * patch * patch, embed)
+
+        ys, xs = torch.meshgrid(torch.linspace(-1, 1, gh),
+                                torch.linspace(-1, 1, gw), indexing="ij")
+        coords = torch.stack((xs, ys), dim=-1).view(-1, 2)
+        self.register_buffer("pos",
+                             fourier_encode(coords, max_freq, bands),
+                             persistent=False)
+        self.pos_proj = nn.Linear(self.pos.shape[-1], embed)
+
+    def forward(self, x):                     # (B,3,224,224)
+        B = x.size(0)
+        p = x.unfold(2,16,16).unfold(3,16,16) # (B,3,Hp,Wp,16,16)
+        p = p.reshape(B, 3, -1, 16, 16).permute(0,2,1,3,4)
+        p = p.reshape(B, -1, 3*16*16)         # (B,N,768)
+        t = self.proj(p) + self.pos_proj(self.pos).unsqueeze(0)
+        return t                              # (B,N,128)
+    
+
+class SensorInputAdapter(nn.Module):
+    def __init__(self, embed_dim=128, n_sensors=7, n_features=9, fourier_dim=16, hidden=32):
+        super().__init__()
+
+        self.value_mlp = nn.Sequential(
+            nn.Linear(1, hidden),
+            nn.GELU(),
+            nn.Linear(hidden, embed_dim)
+        )
+
+        self.n_sensors = n_sensors
+        self.n_features = n_features
+
+        self.sensor_emb = nn.Embedding(n_sensors, embed_dim)
+        self.stat_emb   = nn.Embedding(n_features, embed_dim)
+
+        self.freqs = nn.Parameter(
+            torch.exp(-math.log(10_000) * torch.arange(fourier_dim) / fourier_dim),
+            requires_grad=False
+        )
+        self.pos_proj = nn.Linear(2 * fourier_dim, embed_dim, bias=False)
+
+        self.type_tok = nn.Parameter(torch.randn(1, 1, embed_dim))
+
+        self.norm = nn.LayerNorm(embed_dim)
+
+    def fourier_encode(self, t):                     # t shape (...)
+        ang = t.unsqueeze(-1) * self.freqs          # (…, F)
+        return torch.cat([ang.sin(), ang.cos()], -1)
+
+    def forward(self, x, pos_idx=None):        
+        B = x.shape[0]
+        S = self.n_sensors
+        F = self.n_features
+        x = x.reshape(B, S, F)
+
+        # --- Values + Semantic -----------------------------------------------
+        v_tok = self.value_mlp(x.unsqueeze(-1))      # (B, S, F, E)
+
+        s_idx = torch.arange(S, device=x.device)
+        f_idx = torch.arange(F, device=x.device)
+        s_tok = self.sensor_emb(s_idx)[None, :, None, :]   # (1,S,1,E)
+        f_tok = self.stat_emb(f_idx)[None, None, :, :]     # (1,1,F,E)
+
+        tok = v_tok + s_tok + f_tok                       # (B,S,F,E)
+
+        # --- Time Stamp-------------------------------------------------------
+        if pos_idx is not None:                           # pos_idx (B,)
+            p = self.pos_proj(self.fourier_encode(pos_idx.float()))  # (B,E)
+            tok += p[:, None, None, :]
+
+        tok = self.norm(tok).view(B, S * F, -1)           # flatten to (B,N,E)
+        return torch.cat([self.type_tok.expand(B, -1, -1), tok], dim=1)
+
+
+
+# ---------- multimodal perceiver ----------
+class MultimodalPerceiver(nn.Module):
+    def __init__(self, img_size=224, n_sensors=7, n_sensor_features=9, num_classes=10, latent_dim=32, token_dim=128, num_lat=128, depth=3, cross_heads=1, latent_heads=8, seq_dropout_prob=0.2, device='cuda'):
+        super().__init__()
+        
+        if type(img_size) == tuple:
+            img_size = img_size[0]
+        self.img_adapt  = ImageInputAdapter(img_size=img_size, embed=token_dim)
+        self.sens_adapt = SensorInputAdapter(embed_dim=token_dim, n_sensors=n_sensors, n_features=n_sensor_features)
+
+        self.perceiver = PerceiverIO(
+            dim          = token_dim,
+            queries_dim  = latent_dim,
+            num_latents  = num_lat,
+            latent_dim   = latent_dim,
+            depth        = depth,
+            cross_heads  = cross_heads,
+            latent_heads = latent_heads,
+            weight_tie_layers=False,
+            seq_dropout_prob=seq_dropout_prob
+        )
+        self.query      = nn.Parameter(torch.randn(1, 1, latent_dim))
+        self.out_proj   = nn.Linear(latent_dim, num_classes)
+        
+        self.device = device
+        self.to(device)
+
+    def forward(self, X):
+        """
+        img    : (B,3,224,224)
+        sensor : (B,F)  variable-length
+        """
+        img, sensor = X
+        img = img.to(self.device)
+        sensor = sensor.to(self.device)
+
+        tok = torch.cat([self.img_adapt(img),
+                         self.sens_adapt(sensor)], dim=1)  # concat streams
+
+        
+        decoded = self.perceiver(tok, queries=self.query.repeat(img.size(0),1,1))
+        return self.out_proj(decoded.squeeze(1))           # (B, num_classes)
