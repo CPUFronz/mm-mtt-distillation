@@ -84,20 +84,31 @@ def main(args):
     print('Hyper-parameters: \n', args.__dict__)
     print('Evaluation model pool: ', model_eval_pool)
 
+    #######################################################################
+    # modified by Franz:
+    #######################################################################
     ''' organize the real dataset '''
     images_all = []
+    sensor_all = []
     labels_all = []
     indices_class = [[] for c in range(num_classes)]
     print("BUILDING DATASET")
     for i in tqdm(range(len(dst_train))):
-        sample = dst_train[i]
-        images_all.append(torch.unsqueeze(sample[0], dim=0))
-        labels_all.append(class_map[torch.tensor(sample[1]).item()])
+        if args.unimodal == 'model':
+            sample = dst_train[i]
+            images_all.append(torch.unsqueeze(sample[0], dim=0))
+            labels_all.append(class_map[torch.tensor(sample[1]).item()])
+        else:
+            sample = dst_train[i]
+            images_all.append(torch.unsqueeze(sample[0][0], dim=0))
+            sensor_all.append(torch.unsqueeze(sample[0][1], dim=0))
+            labels_all.append(class_map[torch.tensor(sample[1]).item()])
 
     for i, lab in tqdm(enumerate(labels_all)):
         indices_class[lab].append(i)
-    images_all = torch.cat(images_all, dim=0).to("cpu")
-    labels_all = torch.tensor(labels_all, dtype=torch.long, device="cpu")
+    images_all = torch.cat(images_all, dim=0).to('cpu')
+    sensor_all = torch.cat(sensor_all, dim=0).to('cpu')
+    labels_all = torch.tensor(labels_all, dtype=torch.long).to('cpu')
 
     for c in range(num_classes):
         print('class c = %d: %d real images'%(c, len(indices_class[c])))
@@ -142,6 +153,15 @@ def main(args):
     optimizer_img = torch.optim.SGD([image_syn], lr=args.lr_img, momentum=0.5)
     optimizer_lr = torch.optim.SGD([syn_lr], lr=args.lr_lr, momentum=0.5)
     optimizer_img.zero_grad()
+
+    # TODO different initialization for sensor modality?
+    if args.unimodal != 'model':
+        sensor_syn = torch.randn(size=(num_classes * args.ipc, args.n_input_features), dtype=torch.float)
+        sensor_syn = sensor_syn.detach().to(args.device).requires_grad_(True)
+        optimizer_sens = torch.optim.SGD([sensor_syn], lr=args.lr_img, momentum=0.5)
+        optimizer_sens.zero_grad()
+
+    #######################################################################
 
     criterion = nn.CrossEntropyLoss().to(args.device)
     print('%s training begins'%get_time())
@@ -220,12 +240,25 @@ def main(args):
                     net_eval = get_network(model_eval, channel, num_classes, im_size, **kwargs).to(args.device) # get a random model
 
                     eval_labs = label_syn
+                    #######################################################################
+                    # modified by Franz
+                    #######################################################################
                     with torch.no_grad():
                         image_save = image_syn
-                    image_syn_eval, label_syn_eval = copy.deepcopy(image_save.detach()), copy.deepcopy(eval_labs.detach()) # avoid any unaware modification
+                        if args.unimodal != 'model':
+                            sensor_save = sensor_syn
+                    
+                    # avoid any unaware modification
+                    image_syn_eval = copy.deepcopy(image_save.detach())
+                    label_syn_eval = copy.deepcopy(eval_labs.detach())
+                    if args.unimodal != 'model':
+                        sensor_syn_eval = copy.deepcopy(sensor_save.detach())
+                    else:
+                        sensor_syn_eval = None
 
                     args.lr_net = syn_lr.item()
-                    _, acc_train, acc_test = evaluate_synset(it_eval, net_eval, image_syn_eval, label_syn_eval, testloader, args, texture=args.texture)
+                    _, acc_train, acc_test = evaluate_synset(it_eval, net_eval, image_syn_eval, label_syn_eval, testloader, args, texture=args.texture, sensor_train=sensor_syn_eval)
+                    #######################################################################
                     accs_test.append(acc_test)
                     accs_train.append(acc_train)
                 accs_test = np.array(accs_test)
@@ -281,9 +314,8 @@ def main(args):
                         wandb.log({"Clipped_Synthetic_Images/std_{}".format(clip_val): wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
 
                     if args.zca:
-                        image_save = image_save.to(args.device)
+                        image_save = image_save.cpu() # modifedy by Franz
                         image_save = args.zca_trans.inverse_transform(image_save)
-                        image_save.cpu()
 
                         torch.save(image_save.cpu(), os.path.join(save_dir, "images_zca_{}.pt".format(it)))
 
@@ -349,6 +381,8 @@ def main(args):
         starting_params = torch.cat([p.data.to(args.device).reshape(-1) for p in starting_params], 0)
 
         syn_images = image_syn
+        if args.unimodal != 'model': # added by Franz
+            syn_sensor = sensor_syn
 
         y_hat = label_syn.to(args.device)
 
@@ -364,7 +398,6 @@ def main(args):
 
             these_indices = indices_chunks.pop()
 
-
             x = syn_images[these_indices]
             this_y = y_hat[these_indices]
 
@@ -374,6 +407,9 @@ def main(args):
 
             if args.dsa and (not args.no_aug):
                 x = DiffAugment(x, args.dsa_strategy, param=args.dsa_param)
+
+            if args.unimodal != 'model': # added by Franz
+                x = (x, syn_sensor[these_indices])
 
             if args.distributed:
                 forward_params = student_params[-1].unsqueeze(0).expand(torch.cuda.device_count(), -1)
@@ -405,11 +441,15 @@ def main(args):
         grand_loss = param_loss
 
         optimizer_img.zero_grad()
+        if args.unimodal != 'model': # added by Franz
+            optimizer_sens.zero_grad()
         optimizer_lr.zero_grad()
 
         grand_loss.backward()
 
         optimizer_img.step()
+        if args.unimodal != 'model': # added by Franz
+            optimizer_sens.step()
         optimizer_lr.step()
 
         wandb.log({"Grand_Loss": grand_loss.detach().cpu(),

@@ -438,8 +438,10 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
     return loss_avg, acc_avg
 
 
-
-def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, return_loss=False, texture=False):
+#####################################################################
+# modified by Franz
+#####################################################################
+def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, return_loss=False, texture=False, sensor_train=None):
     net = net.to(args.device)
     images_train = images_train.to(args.device)
     labels_train = labels_train.to(args.device)
@@ -450,7 +452,11 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
 
     criterion = nn.CrossEntropyLoss().to(args.device)
 
-    dst_train = TensorDataset(images_train, labels_train)
+    
+    if sensor_train is None:
+        dst_train = TensorDataset(images_train, labels_train)
+    else:
+        dst_train = MultimodalTensorDataset(images_train, sensor_train, labels_train)
     trainloader = torch.utils.data.DataLoader(dst_train, batch_size=args.batch_train, shuffle=True, num_workers=0)
 
     start = time.time()
@@ -477,6 +483,7 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
         return net, acc_train_list, acc_test, loss_train_list, loss_test
     else:
         return net, acc_train_list, acc_test
+#####################################################################
 
 
 def augment(images, dc_aug_param, device):
