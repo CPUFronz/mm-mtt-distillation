@@ -202,7 +202,7 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         std = [0.15099436, 0.23058386, 0.23078493]
         num_classes = df['label'].nunique()
         class_names = encoder.classes_.tolist()
-        class_map = {x: encoder.classes_[x] for x in range(num_classes)}
+        class_map = {x: x for x in range(num_classes)}
         class_map_inv = None
     #####################################################################
 
