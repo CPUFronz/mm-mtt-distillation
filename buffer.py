@@ -213,7 +213,7 @@ if __name__ == '__main__':
 
     args.wandb_mode = os.environ.get('WANDB_MODE', 'online')
     if args.optuna_trials > 0:
-        wandb_mode = 'disabled' # disable wandb during hyperparameter search
+        args.wandb_mode = 'disabled' # disable wandb during hyperparameter search
 
         import optuna
         def objective(trial):
