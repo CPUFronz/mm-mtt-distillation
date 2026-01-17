@@ -379,7 +379,8 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwar
         net = MMSConvB(
             n_layers_img=4,
             n_units_img=64,
-            n_in_features_sens=kwargs['n_in_features_sens'],
+            n_sensors=kwargs['n_sensors'],
+            n_sensor_features=kwargs['n_sensor_features'],
             n_layers_sens=4,
             n_units_sens=512,
             n_heads_fusion=4,
