@@ -99,6 +99,7 @@ def main(args, trial=None):
             'reinit': True,
             'name': args.name,
             'project': 'DatasetDistillation_Training',
+            'mode': args.wandb_mode
         }
 
         kwargs = {
@@ -212,7 +213,10 @@ if __name__ == '__main__':
     if args.model not in ['MMSConvB', 'Perceiver']:
         args.unimodal = 'model'  # used by multimodal datasets, to only provide images for unimodal models
 
+    wandb_mode = 'online'
     if args.optuna_trials > 0:
+        wandb_mode = 'disabled' # disable wandb during hyperparameter search
+
         import optuna
         def objective(trial):
             trial_args = copy.deepcopy(args)
@@ -225,9 +229,7 @@ if __name__ == '__main__':
 
         storage = f"sqlite:///optuna_results.db"
         pruner = optuna.pruners.MedianPruner(n_warmup_steps=25)
-        # TODO: make name adjustable
-        # TODO: deactivate wandb inside optuna trials
-        study = optuna.create_study(direction='maximize', pruner=pruner, storage=storage, load_if_exists=True, study_name='MMSConvB_RaspiCar_Unimodal')
+        study = optuna.create_study(direction='maximize', pruner=pruner, storage=storage, load_if_exists=True, study_name=args.name)
         study.optimize(objective, n_trials=args.optuna_trials)
         print(f"Best value: {study.best_value}")
         print(f"Best params: {study.best_params}")
