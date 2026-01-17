@@ -220,13 +220,13 @@ if __name__ == '__main__':
             trial_args = copy.deepcopy(args)
             trial_args.batch_train = trial.suggest_categorical('batch_size', [64, 128, 256, 512])
             trial_args.batch_real = trial_args.batch_train
-            trial_args.n_groups = trial.suggest_categorical('n_groups', [1, 2, 4, 8, 16, 32])
-            trial_args.train_epochs = trial.suggest_categorical('epochs', [50, 100])
-            trial_args.lr_teacher = trial.suggest_float('lr', 1e-4, 1e-1, log=True)
+            #trial_args.n_groups = trial.suggest_categorical('n_groups', [1, 2, 4, 8, 16, 32])
+            trial_args.train_epochs = trial.suggest_categorical('epochs', [50, 100, 250, 500])
+            trial_args.lr_teacher = trial.suggest_float('lr', 1e-7, 1e-1, log=True)
             return main(trial_args, trial)
 
         storage = f"sqlite:///optuna_results.db"
-        pruner = optuna.pruners.MedianPruner(n_warmup_steps=25)
+        pruner = optuna.pruners.MedianPruner(n_warmup_steps=35)
         study = optuna.create_study(direction='maximize', pruner=pruner, storage=storage, load_if_exists=True, study_name=args.name)
         study.optimize(objective, n_trials=args.optuna_trials)
         print(f"Best value: {study.best_value}")
