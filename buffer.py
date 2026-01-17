@@ -211,7 +211,7 @@ if __name__ == '__main__':
     if args.model not in ['MMSConvB', 'Perceiver']:
         args.unimodal = 'model'  # used by multimodal datasets, to only provide images for unimodal models
 
-    wandb_mode = 'online'
+    args.wandb_mode = os.environ.get('WANDB_MODE', 'online')
     if args.optuna_trials > 0:
         wandb_mode = 'disabled' # disable wandb during hyperparameter search
 
