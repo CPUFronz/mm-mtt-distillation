@@ -58,7 +58,7 @@ def main(args, trial=None):
     for i, lab in tqdm(enumerate(labels_all)):
         indices_class[lab].append(i)
     images_all = torch.cat(images_all, dim=0).to("cpu")
-    sensor_all = torch.cat(sensor_all, dim=0).to("cpu")
+    sensor_all = torch.cat(sensor_all, dim=0).to("cpu") if sensor_all else torch.tensor([])
     labels_all = torch.tensor(labels_all, dtype=torch.long, device="cpu")
 
     for c in range(num_classes):
