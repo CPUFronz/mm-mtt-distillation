@@ -671,7 +671,7 @@ def fourier_encode(x, max_freq, num_bands=6):
 class ImageInputAdapter(nn.Module):
     def __init__(self, img_size=224, patch=16, in_ch=3, embed=128, bands=6, max_freq=10.):
         super().__init__()
-        gh, gw = img_size // patch, img_size // patch
+        gh, gw = img_size[0] // patch, img_size[1] // patch
         self.proj = nn.Linear(in_ch * patch * patch, embed)
 
         ys, xs = torch.meshgrid(torch.linspace(-1, 1, gh),
