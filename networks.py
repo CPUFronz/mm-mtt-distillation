@@ -752,8 +752,6 @@ class MultimodalPerceiver(nn.Module):
     def __init__(self, img_size=224, n_sensors=7, n_sensor_features=9, num_classes=10, latent_dim=32, token_dim=128, num_lat=128, depth=3, cross_heads=1, latent_heads=8, seq_dropout_prob=0.2, device='cuda'):
         super().__init__()
         
-        if type(img_size) == tuple:
-            img_size = img_size[0]
         self.img_adapt  = ImageInputAdapter(img_size=img_size, embed=token_dim)
         self.sens_adapt = SensorInputAdapter(embed_dim=token_dim, n_sensors=n_sensors, n_features=n_sensor_features)
 
