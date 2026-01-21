@@ -12,6 +12,7 @@ import copy
 import random
 from reparam_module import ReparamModule
 
+import pandas as pd         # added by Franz
 from utils import fix_seed  # added by Franz
 
 import warnings
@@ -343,6 +344,12 @@ def main(args):
                             grid = torchvision.utils.make_grid(upsampled, nrow=10, normalize=True, scale_each=True)
                             wandb.log({"Clipped_Reconstructed_Images/std_{}".format(clip_val): wandb.Image(
                                 torch.nan_to_num(grid.detach().cpu()))}, step=it)
+
+                    if args.unimodal != 'model':
+                        sensor_save = sensor_syn.cpu().detach().numpy()
+                        sensor_save = dst_test.scaler.inverse_transform(sensor_save)
+                        sensor_save_df = pd.DataFrame(sensor_save, columns=dst_test.scaler.get_feature_names_out())
+                        wandb.log({'Synthetic_Sensors': wandb.Table(dataframe=sensor_save_df)}, step=it)
 
         wandb.log({"Synthetic_LR": syn_lr.detach().cpu()}, step=it)
 

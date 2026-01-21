@@ -257,13 +257,12 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
             dst_test = TensorDataset(zca_images, labels)
         else:
             dst_test = MultimodalTensorDataset(zca_images, sensors, labels)
+            dst_test.scaler = scaler
         #####################################################################
 
         args.zca_trans = zca
 
-
     testloader = torch.utils.data.DataLoader(dst_test, batch_size=128, shuffle=False, num_workers=2)
-
 
     return channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, loader_train_dict, class_map, class_map_inv
 
