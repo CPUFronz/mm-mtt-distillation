@@ -110,6 +110,11 @@ def main(args):
     sensor_all = torch.cat(sensor_all, dim=0).to('cpu')
     labels_all = torch.tensor(labels_all, dtype=torch.long).to('cpu')
 
+    if args.unimodal == 'sensor':
+        images_all = torch.zeros_like(images_all)
+    elif args.unimodal == 'image':
+        sensor_all = torch.zeros_like(sensor_all)
+
     for c in range(num_classes):
         print('class c = %d: %d real images'%(c, len(indices_class[c])))
 
@@ -217,7 +222,6 @@ def main(args):
 
         kwargs = {
             'unimodal': args.unimodal if hasattr(args, 'unimodal') else '',
-            'n_in_features_sens': args.n_input_features if hasattr(args, 'n_input_features') else None,
             'n_groups': args.n_groups if hasattr(args, 'n_groups') else 8,
             'n_sensors': args.n_sensors if hasattr(args, 'n_sensors') else None,
             'n_sensor_features': args.n_sensor_features if hasattr(args, 'n_sensor_features') else None
@@ -442,16 +446,14 @@ def main(args):
 
         grand_loss = param_loss
 
-        optimizer_img.zero_grad()
-        if args.unimodal != 'model': # added by Franz
-            optimizer_sens.zero_grad()
+        optimizer_img.zero_grad()  if args.unimodal != 'sensor' else None                             # modified by Franz
+        optimizer_sens.zero_grad() if args.unimodal != 'model' and args.unimodal != 'image' else None # added by Franz
         optimizer_lr.zero_grad()
 
         grand_loss.backward()
 
-        optimizer_img.step()
-        if args.unimodal != 'model': # added by Franz
-            optimizer_sens.step()
+        optimizer_img.step()  if args.unimodal != 'sensor' else None                             # modified by Franz
+        optimizer_sens.step() if args.unimodal != 'model' and args.unimodal != 'image' else None # added by Franz
         optimizer_lr.step()
 
         wandb.log({"Grand_Loss": grand_loss.detach().cpu(),
