@@ -219,6 +219,8 @@ def main(args):
             'unimodal': args.unimodal if hasattr(args, 'unimodal') else '',
             'n_in_features_sens': args.n_input_features if hasattr(args, 'n_input_features') else None,
             'n_groups': args.n_groups if hasattr(args, 'n_groups') else 8,
+            'n_sensors': args.n_sensors if hasattr(args, 'n_sensors') else None,
+            'n_sensor_features': args.n_sensor_features if hasattr(args, 'n_sensor_features') else None
         }
         #######################################################################
 
