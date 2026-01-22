@@ -162,7 +162,10 @@ def main(args):
 
     # TODO different initialization for sensor modality?
     if args.unimodal != 'model':
-        sensor_syn = torch.randn(size=(num_classes * args.ipc, args.n_input_features), dtype=torch.float)
+        if args.unimodal != 'image':
+            sensor_syn = torch.randn(size=(num_classes * args.ipc, args.n_input_features), dtype=torch.float)
+        else:
+            sensor_syn = torch.zeros(size=(num_classes * args.ipc, args.n_sensor_features), dtype=torch.float) # initialize with 0 for image-only            
         sensor_syn = sensor_syn.detach().to(args.device).requires_grad_(True)
         optimizer_sens = torch.optim.SGD([sensor_syn], lr=args.lr_img, momentum=0.5)
         optimizer_sens.zero_grad()
