@@ -548,7 +548,7 @@ if __name__ == '__main__':
     # added by Franz
     #####################################################################
 
-    parser.add_argument('--seed', type=int, default=1337, help='set random seed')
+    parser.add_argument('--seed', type=int, default=42, help='set random seed')
     parser.add_argument('--unimodal', type=str, default='', choices=['', 'image', 'sensor'], help='unimodal training (only for multimodal datasets)')
     parser.add_argument('--n_groups', type=int, default=8, help='group norm groups (for MMSConvB)')
     parser.add_argument('--name', type=str, default='', help='name for wandb run')
