@@ -386,7 +386,7 @@ def main(args):
                     buffer = buffer[:args.max_experts]
                 random.shuffle(buffer)
 
-        start_epoch = np.random.randint(0, args.max_start_epoch)
+        start_epoch = np.random.randint(args.min_start_epoch, args.max_start_epoch)
         starting_params = expert_trajectory[start_epoch]
 
         target_params = expert_trajectory[start_epoch+args.expert_epochs]
@@ -552,6 +552,7 @@ if __name__ == '__main__':
     parser.add_argument('--unimodal', type=str, default='', choices=['', 'image', 'sensor'], help='unimodal training (only for multimodal datasets)')
     parser.add_argument('--n_groups', type=int, default=8, help='group norm groups (for MMSConvB)')
     parser.add_argument('--name', type=str, default='', help='name for wandb run')
+    parser.add_argument('--min_start_epoch', type=int, default=0, help='min epoch we can start at')
     
     #####################################################################
 
