@@ -204,6 +204,38 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         class_names = encoder.classes_.tolist()
         class_map = {x: x for x in range(num_classes)}
         class_map_inv = None
+
+    elif dataset == 'RoboMNIST':
+        args.window_size = 10
+        args.test_split = 0.2
+        args.image_size = (64, 64)
+
+        df, images = load_robomnist_data(args)
+
+        args.sens_cols = df.columns.drop(['label', 'image_idx'])
+
+        scaler = StandardScaler()
+        scaler.fit(df[args.sens_cols])
+
+        train_data, test_data = train_test_split(df, test_size=args.test_split, random_state=args.seed)
+
+        dst_train = RoboMNISTDataset(train_data, images, scaler, args.sens_cols)
+        dst_test = RoboMNISTDataset(test_data, images, scaler, args.sens_cols)
+
+        args.n_sensors = len(args.sens_cols)
+        args.n_sensor_features = 1
+        args.n_input_features = args.n_sensors * args.n_sensor_features
+        args.n_output_features = df['label'].nunique()
+
+        sample_image = dst_train[0][0][0]
+        channel = sample_image.shape[0]
+        im_size = sample_image.shape[1:]
+        mean = [0.359549389299777, 0.3862599337890894, 0.3577771832990368]
+        std = [0.19270906559562345, 0.17443764500719838, 0.18467636776295263]
+        num_classes = df['label'].nunique()
+        class_names = sorted(df['label'].unique().tolist())
+        class_map = {x: x for x in range(num_classes)}
+        class_map_inv = None
     #####################################################################
 
     else:
@@ -834,6 +866,7 @@ AUGMENT_FNS = {
 
 import os
 import re
+import json
 import time
 import random
 import warnings
@@ -1133,3 +1166,136 @@ class ActionSenseDataset(Dataset):
             sensor_data = self.zero_sensor
 
         return (image, sensor_data), self.labels[idx]
+
+
+def load_robomnist_data(args, root='./data/robomnist/'):
+    cache_fn = f'{root}robomnist_cache.pkl'
+    
+    if os.path.exists(cache_fn):
+        print('Loading existing RoboMNIST data from cache...')
+        data = joblib.load(cache_fn)
+        return data['dataframe'], data['images']
+
+
+    images = []
+    csi = []
+    robots = []
+    labels = []
+    speeds = []
+
+    speed_mapping = {
+        'low': 1,
+        'med': 2,
+        'high': 3
+    }
+
+    for g in sorted(glob(root + '*')):
+        pattern = re.compile(
+            r"(?:.*/)?(?P<name>"
+            r"(?P<folder_nr>\d+)_Ar(?P<robot_nr>\d+)_V(?P<velocity>[^_]+)_Ac(?P<label>\d+)"
+            r")$"
+        )
+        
+        m = pattern.search(g)
+        if m:
+            robot = int(m['robot_nr'])
+            frame_idxs = [30, 100, 200, 300]
+            
+            for fn in sorted(glob(f'{g}/*Rx2_cam.mp4')):
+                
+                robots.append(robot)
+                labels.append(int(m["label"]))
+                speeds.append(speed_mapping[m['velocity']])
+                
+                cap = cv2.VideoCapture(fn)
+
+                for idx in frame_idxs:
+                    cap = cv2.VideoCapture(fn)
+                    frames32 = []
+                    
+                    for idx in frame_idxs:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+                        _, bgr = cap.read()
+                    
+                        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                        if robot == 2:
+                            cropped = rgb[:, 550:1270, :]
+                        elif robot == 1:
+                            cropped = rgb[:, 0:550, :]
+                        cropped_32 =  cv2.resize(cropped, (32, 32), interpolation=cv2.INTER_AREA)
+                    
+                        frames32.append(cropped_32)
+                    cap.release()
+                    
+                top = np.concatenate([frames32[0], frames32[1]], axis=1)
+                bot = np.concatenate([frames32[2], frames32[3]], axis=1)
+                grid = np.concatenate([top, bot], axis=0)
+                grid = grid / 255
+
+                images.append(grid)
+
+            for fn in glob(f'{g}/*_csi.json'):
+                with open(fn, 'r')  as f:
+                    jf = json.load(f)
+
+                    arr_frames = []
+                    for idx in frame_idxs:
+                        arr = np.loadtxt(jf[0]['complex_csi'][idx], dtype=np.complex64)
+                        arr_frames.append(arr.real) # only take the real part (for now)
+                    arr_frames = np.hstack(arr_frames)
+                    csi.append(arr_frames)
+
+    cols = [f'csi_{i}' for i in range(len(arr_frames))]
+    df = pd.DataFrame(np.array(csi), columns=cols)
+    df['robot'] = robots
+    df['label'] = labels
+    df['speed'] = speeds
+    df['image_idx'] = [i for i in range(len(images))]
+
+    # Cache the data to speed up future loading
+    data = {
+        'dataframe': df,
+        'images': images
+    }
+    joblib.dump(data, cache_fn)
+
+    return df, images
+
+
+class RoboMNISTDataset(Dataset):
+    def __init__(self, df, images, scaler, sens_cols, unimodal=''):        
+        self.unimodal = unimodal
+        self.sens_cols = sens_cols
+        self.scaler = scaler
+
+        self.df = df.reset_index(drop=True)
+        self.sensor_data_scaled = self.scaler.transform(df[self.sens_cols])
+        self.images = images
+
+        self.transform = transforms.Compose([
+            transforms.ToTensor()
+        ])
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx):
+        row = self.df.iloc[idx]
+
+        if self.unimodal != 'sensor':
+            image = self.transform(self.images[int(row['image_idx'])])
+        else:
+            sample_image = self.images[0]
+            image = torch.zeros((3, sample_image.shape[0], sample_image.shape[1]))
+
+        if self.unimodal != 'image':
+            sensor_data = torch.Tensor(self.sensor_data_scaled[idx , :].astype(np.float32))
+        else:
+            sensor_data = torch.zeros((len(self.scaler.feature_names_in_),))
+
+        label = row['label']
+
+        if self.unimodal == 'model':
+            return image, label
+        else:
+            return (image, sensor_data), label
