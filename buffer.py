@@ -221,7 +221,7 @@ if __name__ == '__main__':
             trial_args.batch_train = trial.suggest_categorical('batch_size', [64, 128, 256, 512])
             trial_args.batch_real = trial_args.batch_train
             #trial_args.n_groups = trial.suggest_categorical('n_groups', [1, 2, 4, 8, 16, 32])
-            trial_args.train_epochs = trial.suggest_categorical('epochs', [50, 100, 250])
+            trial_args.train_epochs = trial.suggest_categorical('epochs', [50, 100])
             trial_args.lr_teacher = trial.suggest_float('lr', 1e-7, 5e-1, log=True)
             return main(trial_args, trial)
 
