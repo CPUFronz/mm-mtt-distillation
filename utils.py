@@ -1178,7 +1178,8 @@ def load_robomnist_data(args, root='./data/robomnist/'):
 
 
     images = []
-    csi = []
+    csi_real = []
+    csi_imag = []
     robots = []
     labels = []
     speeds = []
@@ -1201,8 +1202,7 @@ def load_robomnist_data(args, root='./data/robomnist/'):
             robot = int(m['robot_nr'])
             frame_idxs = [30, 100, 200, 300]
             
-            for fn in sorted(glob(f'{g}/*Rx2_cam.mp4')):
-                
+            for fn in sorted(glob(f'{g}/*Rx2_cam.mp4')):                
                 robots.append(robot)
                 labels.append(int(m["label"]))
                 speeds.append(speed_mapping[m['velocity']])
@@ -1238,15 +1238,20 @@ def load_robomnist_data(args, root='./data/robomnist/'):
                 with open(fn, 'r')  as f:
                     jf = json.load(f)
 
-                    arr_frames = []
+                    arr_frames_real = []
+                    arr_frames_imag = []
                     for idx in frame_idxs:
                         arr = np.loadtxt(jf[0]['complex_csi'][idx], dtype=np.complex64)
-                        arr_frames.append(arr.real) # only take the real part (for now)
-                    arr_frames = np.hstack(arr_frames)
-                    csi.append(arr_frames)
+                        arr_frames_real.append(arr.real)
+                        arr_frames_imag.append(arr.imag)
+                    arr_frames_real = np.hstack(arr_frames_real)
+                    arr_frames_imag = np.hstack(arr_frames_imag)
+                    csi_real.append(arr_frames_real)
+                    csi_imag.append(arr_frames_imag)
 
-    cols = [f'csi_{i}' for i in range(len(arr_frames))]
-    df = pd.DataFrame(np.array(csi), columns=cols)
+    cols_real = [f'csi_real_{i}' for i in range(len(arr_frames_real))]
+    cols_imag = [f'csi_imag_{i}' for i in range(len(arr_frames_imag))]
+    df = pd.concat([pd.DataFrame(csi_real, columns=cols_real), pd.DataFrame(csi_imag, columns=cols_imag)], axis=1)
     df['robot'] = robots
     df['label'] = labels
     df['speed'] = speeds
