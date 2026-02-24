@@ -1178,84 +1178,115 @@ def load_robomnist_data(args, root='./data/robomnist/'):
 
 
     images = []
-    csi_real = []
-    csi_imag = []
-    robots = []
-    labels = []
-    speeds = []
+    row_dfs = []
 
     speed_mapping = {
         'low': 1,
         'med': 2,
         'high': 3
     }
+    frame_idxs = [30, 100, 200, 300]
+    pattern = re.compile(
+        r"(?:.*/)?(?P<name>"
+        r"(?P<folder_nr>\d+)_Ar(?P<robot_nr>\d+)_V(?P<velocity>[^_]+)_Ac(?P<label>\d+)"
+        r")$"
+    )
+
+    stat_fns = {
+        'mean': np.mean,
+        'std': np.std,
+        'min': np.min,
+        'q25': lambda x, axis: np.quantile(x, 0.25, axis=axis),
+        'median': np.median,
+        'q75': lambda x, axis: np.quantile(x, 0.75, axis=axis),
+        'max': np.max,
+    }
+
+    def _flat_features(prefix, values):
+        flat_values = np.asarray(values).reshape(-1)
+        return {f'{prefix}_{i}': val for i, val in enumerate(flat_values)}
 
     for g in sorted(glob(root + '*')):
-        pattern = re.compile(
-            r"(?:.*/)?(?P<name>"
-            r"(?P<folder_nr>\d+)_Ar(?P<robot_nr>\d+)_V(?P<velocity>[^_]+)_Ac(?P<label>\d+)"
-            r")$"
-        )
-        
         m = pattern.search(g)
-        if m:
-            robot = int(m['robot_nr'])
-            frame_idxs = [30, 100, 200, 300]
+        if not m:
+            continue
+
+        robot = int(m['robot_nr'])
+        label = int(m['label'])
+        speed = speed_mapping[m['velocity']]
+        
+        for fn in sorted(glob(f'{g}/*Rx2_cam.mp4')):
+            cap = cv2.VideoCapture(fn)
+            frames32 = []
+
+            for idx in frame_idxs:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+                _, bgr = cap.read()
+
+                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                if robot == 2:
+                    cropped = rgb[:, 550:1270, :]
+                elif robot == 1:
+                    cropped = rgb[:, 0:550, :]
+                cropped_32 = cv2.resize(cropped, (32, 32), interpolation=cv2.INTER_AREA)
+
+                frames32.append(cropped_32)
+            cap.release()
+
+            top = np.concatenate([frames32[0], frames32[1]], axis=1)
+            bot = np.concatenate([frames32[2], frames32[3]], axis=1)
+            grid = np.concatenate([top, bot], axis=0) / 255
+            images.append(grid)
             
-            for fn in sorted(glob(f'{g}/*Rx2_cam.mp4')):                
-                robots.append(robot)
-                labels.append(int(m["label"]))
-                speeds.append(speed_mapping[m['velocity']])
-                
-                cap = cv2.VideoCapture(fn)
 
-                for idx in frame_idxs:
-                    cap = cv2.VideoCapture(fn)
-                    frames32 = []
-                    
-                    for idx in frame_idxs:
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
-                        _, bgr = cap.read()
-                    
-                        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-                        if robot == 2:
-                            cropped = rgb[:, 550:1270, :]
-                        elif robot == 1:
-                            cropped = rgb[:, 0:550, :]
-                        cropped_32 =  cv2.resize(cropped, (32, 32), interpolation=cv2.INTER_AREA)
-                    
-                        frames32.append(cropped_32)
-                    cap.release()
-                    
-                top = np.concatenate([frames32[0], frames32[1]], axis=1)
-                bot = np.concatenate([frames32[2], frames32[3]], axis=1)
-                grid = np.concatenate([top, bot], axis=0)
-                grid = grid / 255
+        for fn in glob(f'{g}/*_csi.json'):
+            with open(fn, 'r') as f:
+                jf = json.load(f)
 
-                images.append(grid)
+            csi_paths = jf[0]['complex_csi']
+            arr_frames_real = []
+            arr_frames_imag = []
+            stats = defaultdict(list)
 
-            for fn in glob(f'{g}/*_csi.json'):
-                with open(fn, 'r')  as f:
-                    jf = json.load(f)
+            for idx in frame_idxs:
+                arr = np.loadtxt(csi_paths[idx], dtype=np.complex64)
+                arr_frames_real.append(arr.real)
+                arr_frames_imag.append(arr.imag)
 
-                    arr_frames_real = []
-                    arr_frames_imag = []
-                    for idx in frame_idxs:
-                        arr = np.loadtxt(jf[0]['complex_csi'][idx], dtype=np.complex64)
-                        arr_frames_real.append(arr.real)
-                        arr_frames_imag.append(arr.imag)
-                    arr_frames_real = np.hstack(arr_frames_real)
-                    arr_frames_imag = np.hstack(arr_frames_imag)
-                    csi_real.append(arr_frames_real)
-                    csi_imag.append(arr_frames_imag)
+                arr_stat = [
+                    np.loadtxt(csi_paths[i], dtype=np.complex64)
+                    for i in range(idx - args.window_size, idx)
+                ]
+                arr_stat_real = np.array(arr_stat).real
+                arr_stat_imag = np.array(arr_stat).imag
 
-    cols_real = [f'csi_real_{i}' for i in range(len(arr_frames_real))]
-    cols_imag = [f'csi_imag_{i}' for i in range(len(arr_frames_imag))]
-    df = pd.concat([pd.DataFrame(csi_real, columns=cols_real), pd.DataFrame(csi_imag, columns=cols_imag)], axis=1)
-    df['robot'] = robots
-    df['label'] = labels
-    df['speed'] = speeds
-    df['image_idx'] = [i for i in range(len(images))]
+                for stat_name, stat_fn in stat_fns.items():
+                    stats[f'csi_real_{stat_name}'].append(stat_fn(arr_stat_real, axis=0))
+                    stats[f'csi_imag_{stat_name}'].append(stat_fn(arr_stat_imag, axis=0))
+
+            row_dict = {
+                'robot': robot,
+                'label': label,
+                'speed': speed,
+                'image_idx': len(row_dfs)
+            }
+            row_dict.update(_flat_features('csi_real', np.hstack(arr_frames_real)))
+            row_dict.update(_flat_features('csi_imag', np.hstack(arr_frames_imag)))
+            for stat_name in stat_fns:
+                row_dict.update(
+                    _flat_features(f'csi_real_{stat_name}', np.hstack(stats[f'csi_real_{stat_name}']))
+                )
+                row_dict.update(
+                    _flat_features(f'csi_imag_{stat_name}', np.hstack(stats[f'csi_imag_{stat_name}']))
+                )
+
+            tmp_df = pd.DataFrame([row_dict])
+            row_dfs.append(tmp_df)
+
+    if row_dfs:
+        df = pd.concat(row_dfs, ignore_index=True)
+    else:
+        raise ValueError("No valid data found in the specified directory.")
 
     # Cache the data to speed up future loading
     data = {
