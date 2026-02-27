@@ -219,8 +219,8 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
 
         train_data, test_data = train_test_split(df, test_size=args.test_split, random_state=args.seed)
 
-        dst_train = RoboMNISTDataset(train_data, images, scaler, args.sens_cols)
-        dst_test = RoboMNISTDataset(test_data, images, scaler, args.sens_cols)
+        dst_train = RoboMNISTDataset(train_data, images, scaler, args.sens_cols, args.unimodal)
+        dst_test = RoboMNISTDataset(test_data, images, scaler, args.sens_cols, args.unimodal)
 
         args.n_sensors = len(args.sens_cols)
         args.n_sensor_features = 1
