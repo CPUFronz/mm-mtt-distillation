@@ -230,6 +230,7 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         sample_image = dst_train[0][0][0]
         channel = sample_image.shape[0]
         im_size = sample_image.shape[1:]
+        assert im_size == args.image_size, "Image size mismatch. Expected: {}, Got: {}".format(args.image_size, im_size)
         mean = [0.359549389299777, 0.3862599337890894, 0.3577771832990368]
         std = [0.19270906559562345, 0.17443764500719838, 0.18467636776295263]
         num_classes = df['label'].nunique()
