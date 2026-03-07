@@ -208,7 +208,7 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
     elif dataset == 'RoboMNIST':
         args.window_size = 10
         args.test_split = 0.2
-        args.image_size = (64, 64)
+        args.image_size = (32, 32)
 
         df, images = load_robomnist_data(args)
 
@@ -1168,6 +1168,53 @@ class ActionSenseDataset(Dataset):
         return (image, sensor_data), self.labels[idx]
 
 
+def approximate_rank_pooling_weights(T):
+    if T < 1:
+        raise ValueError("T must be >= 1")
+
+    # Harmonic numbers H_0 ... H_T
+    H = np.zeros(T + 1, dtype=np.float64)
+    H[1:] = np.cumsum(1.0 / np.arange(1, T + 1, dtype=np.float64))
+
+    t = np.arange(1, T + 1, dtype=np.float64)
+    alpha = 2 * (T - t + 1) - (T + 1) * (H[T] - H[(t - 1).astype(int)])
+    return alpha.astype(np.float32)
+
+
+def dynamic_image_arp(frames, use_sqrt=False, output_uint8=True, eps=1e-8):
+    x = np.asarray(frames)
+
+    if x.ndim not in (3, 4):
+        raise ValueError("frames must have shape [T,H,W] or [T,H,W,C]")
+
+    if x.shape[0] < 1:
+        raise ValueError("frames must contain at least one frame")
+
+    x = x.astype(np.float32)
+
+    # Optional nonlinearity
+    if use_sqrt:
+        # For image pixels usually x >= 0, but this is robust either way
+        x = np.sign(x) * np.sqrt(np.abs(x))
+
+    alpha = approximate_rank_pooling_weights(x.shape[0])
+
+    # Weighted sum over time axis
+    # [T] x [T,H,W,(C)] -> [H,W,(C)]
+    dyn = np.tensordot(alpha, x, axes=(0, 0)).astype(np.float32)
+
+    if not output_uint8:
+        return dyn
+
+    # Min-max normalization to image range [0,255]
+    dyn_min = dyn.min()
+    dyn_max = dyn.max()
+    dyn = (dyn - dyn_min) / max(dyn_max - dyn_min, eps)
+    dyn = np.clip(dyn * 255.0, 0, 255).astype(np.uint8)
+
+    return dyn
+
+
 def load_robomnist_data(args, root='./data/robomnist/'):
     cache_fn = f'{root}robomnist_cache.pkl'
     
@@ -1233,10 +1280,8 @@ def load_robomnist_data(args, root='./data/robomnist/'):
                 frames32.append(cropped_32)
             cap.release()
 
-            top = np.concatenate([frames32[0], frames32[1]], axis=1)
-            bot = np.concatenate([frames32[2], frames32[3]], axis=1)
-            grid = np.concatenate([top, bot], axis=0) / 255
-            images.append(grid)
+            dynamic_image = dynamic_image_arp(frames32)
+            images.append(dynamic_image)
             
 
         for fn in glob(f'{g}/*_csi.json'):
