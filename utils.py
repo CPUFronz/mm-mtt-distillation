@@ -1223,6 +1223,8 @@ def load_robomnist_data(args, root='./data/robomnist/'):
         print('Loading existing RoboMNIST data from cache...')
         data = joblib.load(cache_fn)
         return data['dataframe'], data['images']
+    else:
+        print('Building RoboMNIST data...')
 
 
     images = []
@@ -1233,7 +1235,6 @@ def load_robomnist_data(args, root='./data/robomnist/'):
         'med': 2,
         'high': 3
     }
-    frame_idxs = [30, 100, 200, 300]
     pattern = re.compile(
         r"(?:.*/)?(?P<name>"
         r"(?P<folder_nr>\d+)_Ar(?P<robot_nr>\d+)_V(?P<velocity>[^_]+)_Ac(?P<label>\d+)"
@@ -1263,11 +1264,12 @@ def load_robomnist_data(args, root='./data/robomnist/'):
         label = int(m['label'])
         speed = speed_mapping[m['velocity']]
         
+        print(f'Processing {g}') # TODO: remove?
         for fn in sorted(glob(f'{g}/*Rx2_cam.mp4')):
             cap = cv2.VideoCapture(fn)
             frames32 = []
 
-            for idx in frame_idxs:
+            for idx in range(args.window_size, int(cap.get(cv2.CAP_PROP_FRAME_COUNT))):
                 cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
                 _, bgr = cap.read()
 
@@ -1276,13 +1278,19 @@ def load_robomnist_data(args, root='./data/robomnist/'):
                     cropped = rgb[:, 550:1270, :]
                 elif robot == 1:
                     cropped = rgb[:, 0:550, :]
-                cropped_32 = cv2.resize(cropped, (32, 32), interpolation=cv2.INTER_AREA)
+                cropped_32 = cv2.resize(cropped, (args.image_size[0], args.image_size[1]), interpolation=cv2.INTER_AREA)
 
                 frames32.append(cropped_32)
             cap.release()
 
             dynamic_image = dynamic_image_arp(frames32)
             images.append(dynamic_image)
+
+            # TODO: remove!
+            img_fn = f'dynamic_image_{robot}_{label}_{speed}.jpg'
+            if not os.path.exists(img_fn):
+                import matplotlib.pyplot as plt
+                plt.imsave(img_fn, dynamic_image)
             
 
         for fn in glob(f'{g}/*_csi.json'):
@@ -1294,21 +1302,18 @@ def load_robomnist_data(args, root='./data/robomnist/'):
             arr_frames_imag = []
             stats = defaultdict(list)
 
-            for idx in frame_idxs:
+            # interate over all frames, because numpy doesn't like to load the whole text file at once
+            for idx in range(len(csi_paths)):
                 arr = np.loadtxt(csi_paths[idx], dtype=np.complex64)
                 arr_frames_real.append(arr.real)
                 arr_frames_imag.append(arr.imag)
 
-                arr_stat = [
-                    np.loadtxt(csi_paths[i], dtype=np.complex64)
-                    for i in range(idx - args.window_size, idx)
-                ]
-                arr_stat_real = np.array(arr_stat).real
-                arr_stat_imag = np.array(arr_stat).imag
+            arr_frames_real = np.array(arr_frames_real)
+            arr_frames_imag = np.array(arr_frames_imag)
 
-                for stat_name, stat_fn in stat_fns.items():
-                    stats[f'csi_real_{stat_name}'].append(stat_fn(arr_stat_real, axis=0))
-                    stats[f'csi_imag_{stat_name}'].append(stat_fn(arr_stat_imag, axis=0))
+            for stat_name, stat_fn in stat_fns.items():
+                stats[f'csi_real_{stat_name}'].append(stat_fn(arr_frames_real, axis=0))
+                stats[f'csi_imag_{stat_name}'].append(stat_fn(arr_frames_imag, axis=0))
 
             row_dict = {
                 'robot': robot,
@@ -1316,15 +1321,9 @@ def load_robomnist_data(args, root='./data/robomnist/'):
                 'speed': speed,
                 'image_idx': len(row_dfs)
             }
-            row_dict.update(_flat_features('csi_real', np.hstack(arr_frames_real)))
-            row_dict.update(_flat_features('csi_imag', np.hstack(arr_frames_imag)))
             for stat_name in stat_fns:
-                row_dict.update(
-                    _flat_features(f'csi_real_{stat_name}', np.hstack(stats[f'csi_real_{stat_name}']))
-                )
-                row_dict.update(
-                    _flat_features(f'csi_imag_{stat_name}', np.hstack(stats[f'csi_imag_{stat_name}']))
-                )
+                row_dict.update(_flat_features(f'csi_real_{stat_name}', np.hstack(stats[f'csi_real_{stat_name}'])))
+                row_dict.update(_flat_features(f'csi_imag_{stat_name}', np.hstack(stats[f'csi_imag_{stat_name}'])))
 
             tmp_df = pd.DataFrame([row_dict])
             row_dfs.append(tmp_df)
