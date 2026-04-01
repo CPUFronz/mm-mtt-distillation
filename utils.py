@@ -1217,18 +1217,14 @@ def dynamic_image_arp(frames, use_sqrt=False, output_uint8=True, eps=1e-8):
 
 
 def load_robomnist_data(args, root='./data/robomnist/'):
-    cache_fn = f'{root}robomnist_cache.pkl'
-    
+    cache_fn = os.path.join(root, 'robomnist_cache.pkl')
+
     if os.path.exists(cache_fn):
         print('Loading existing RoboMNIST data from cache...')
         data = joblib.load(cache_fn)
         return data['dataframe'], data['images']
     else:
         print('Building RoboMNIST data...')
-
-
-    images = []
-    row_dfs = []
 
     speed_mapping = {
         'low': 1,
@@ -1255,85 +1251,126 @@ def load_robomnist_data(args, root='./data/robomnist/'):
         flat_values = np.asarray(values).reshape(-1)
         return {f'{prefix}_{i}': val for i, val in enumerate(flat_values)}
 
-    for g in sorted(glob(root + '*')):
-        m = pattern.search(g)
-        if not m:
-            continue
+    def _sample_prefix(fn):
+        base = os.path.basename(fn)
+        prefix, sep, _ = base.rpartition('_Rx')
+        return prefix if sep else os.path.splitext(base)[0]
 
-        robot = int(m['robot_nr'])
-        label = int(m['label'])
-        speed = speed_mapping[m['velocity']]
-        
-        print(f'Processing {g}') # TODO: remove?
-        for fn in sorted(glob(f'{g}/*Rx2_cam.mp4')):
-            cap = cv2.VideoCapture(fn)
-            frames32 = []
+    def _resize_robomnist_frame(rgb, robot):
+        if robot == 2:
+            cropped = rgb[:, 550:1270, :]
+        elif robot == 1:
+            cropped = rgb[:, 0:550, :]
+        else:
+            raise ValueError(f'Unsupported robot id: {robot}')
 
-            for idx in range(args.window_size, int(cap.get(cv2.CAP_PROP_FRAME_COUNT))):
-                cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
-                _, bgr = cap.read()
+        return cv2.resize(cropped, (args.image_size[0], args.image_size[1]), interpolation=cv2.INTER_AREA)
+
+    def _build_dynamic_image(video_fn, robot):
+        cap = cv2.VideoCapture(video_fn)
+        frames32 = []
+        frame_idx = 0
+
+        try:
+            while True:
+                ok, bgr = cap.read()
+                if not ok:
+                    break
 
                 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-                if robot == 2:
-                    cropped = rgb[:, 550:1270, :]
-                elif robot == 1:
-                    cropped = rgb[:, 0:550, :]
-                cropped_32 = cv2.resize(cropped, (args.image_size[0], args.image_size[1]), interpolation=cv2.INTER_AREA)
+                frames32.append(_resize_robomnist_frame(rgb, robot))
 
-                frames32.append(cropped_32)
+                frame_idx += 1
+        finally:
             cap.release()
 
-            dynamic_image = dynamic_image_arp(frames32)
-            images.append(dynamic_image)
+        if not frames32:
+            raise ValueError(f'No usable frames found in {video_fn}')
 
-            # TODO: remove!
-            img_fn = f'dynamic_image_{robot}_{label}_{speed}.jpg'
-            if not os.path.exists(img_fn):
-                import matplotlib.pyplot as plt
-                plt.imsave(img_fn, dynamic_image)
-            
+        return dynamic_image_arp(frames32)
 
-        for fn in glob(f'{g}/*_csi.json'):
-            with open(fn, 'r') as f:
-                jf = json.load(f)
+    def _load_csi_features(csi_json_fn):
+        with open(csi_json_fn, 'r') as f:
+            jf = json.load(f)
 
-            csi_paths = jf[0]['complex_csi']
-            arr_frames_real = []
-            arr_frames_imag = []
-            stats = defaultdict(list)
+        csi_paths = jf[0]['complex_csi']
+        if not csi_paths:
+            raise ValueError(f'No CSI frames found in {csi_json_fn}')
 
-            # interate over all frames, because numpy doesn't like to load the whole text file at once
-            for idx in range(len(csi_paths)):
-                arr = np.loadtxt(csi_paths[idx], dtype=np.complex64)
-                arr_frames_real.append(arr.real)
-                arr_frames_imag.append(arr.imag)
+        arr_frames = np.asarray([np.loadtxt(csi_path, dtype=np.complex64) for csi_path in csi_paths], dtype=np.complex64)
+        arr_frames_real = arr_frames.real
+        arr_frames_imag = arr_frames.imag
 
-            arr_frames_real = np.array(arr_frames_real)
-            arr_frames_imag = np.array(arr_frames_imag)
+        features = {}
+        for stat_name, stat_fn in stat_fns.items():
+            features.update(_flat_features(f'csi_real_{stat_name}', stat_fn(arr_frames_real, axis=0)))
+            features.update(_flat_features(f'csi_imag_{stat_name}', stat_fn(arr_frames_imag, axis=0)))
 
-            for stat_name, stat_fn in stat_fns.items():
-                stats[f'csi_real_{stat_name}'].append(stat_fn(arr_frames_real, axis=0))
-                stats[f'csi_imag_{stat_name}'].append(stat_fn(arr_frames_imag, axis=0))
+        return features
 
+    def _process_group(group_dir):
+        match = pattern.search(group_dir)
+        if not match:
+            return []
+
+        robot = int(match['robot_nr'])
+        label = int(match['label'])
+        speed = speed_mapping[match['velocity']]
+
+        video_files = {_sample_prefix(fn): fn for fn in sorted(glob(os.path.join(group_dir, '*Rx2_cam.mp4')))}
+        csi_files   = {_sample_prefix(fn): fn for fn in sorted(glob(os.path.join(group_dir, '*_csi.json')))}
+
+        if not video_files and not csi_files:
+            return []
+
+        missing_videos = sorted(csi_files.keys() - video_files.keys())
+        missing_csi = sorted(video_files.keys() - csi_files.keys())
+        if missing_videos or missing_csi:
+            warnings.warn(f'Skipping unmatched RoboMNIST files in {group_dir}: {len(missing_videos)} CSI-only, {len(missing_csi)} video-only samples.')
+
+        sample_ids = sorted(video_files.keys() & csi_files.keys())
+        group_rows = []
+
+        for sample_id in sample_ids:
+            dynamic_image = _build_dynamic_image(video_files[sample_id], robot)
             row_dict = {
                 'robot': robot,
                 'label': label,
                 'speed': speed,
-                'image_idx': len(row_dfs)
             }
-            for stat_name in stat_fns:
-                row_dict.update(_flat_features(f'csi_real_{stat_name}', np.hstack(stats[f'csi_real_{stat_name}'])))
-                row_dict.update(_flat_features(f'csi_imag_{stat_name}', np.hstack(stats[f'csi_imag_{stat_name}'])))
+            row_dict.update(_load_csi_features(csi_files[sample_id]))
 
-            tmp_df = pd.DataFrame([row_dict])
-            row_dfs.append(tmp_df)
+            group_rows.append((sample_id, row_dict, dynamic_image))
 
-    if row_dfs:
-        df = pd.concat(row_dfs, ignore_index=True)
+        return group_rows
+
+    group_dirs = [g for g in sorted(glob(os.path.join(root, '*'))) if os.path.isdir(g) and pattern.search(g)]
+
+    configured_workers = min(8, os.cpu_count() or 1)
+    max_workers = min(len(group_dirs) or 1, max(1, int(configured_workers)))
+
+    group_results = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_group = {executor.submit(_process_group, group_dir): group_dir for group_dir in group_dirs}
+        for future in as_completed(future_to_group):
+            group_dir = future_to_group[future]
+            group_results[group_dir] = future.result()
+
+    images = []
+    row_dicts = []
+
+    # Preserve the original deterministic group/sample ordering after parallel work.
+    for group_dir in group_dirs:
+        for _, row_dict, dynamic_image in group_results.get(group_dir, []):
+            row_dict['image_idx'] = len(images)
+            images.append(dynamic_image)
+            row_dicts.append(row_dict)
+
+    if row_dicts:
+        df = pd.DataFrame(row_dicts)
     else:
         raise ValueError("No valid data found in the specified directory.")
 
-    # Cache the data to speed up future loading
     data = {
         'dataframe': df,
         'images': images
