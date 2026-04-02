@@ -23,7 +23,7 @@ def main(args):
     if args.zca and args.texture:
         raise AssertionError("Cannot use zca and texture together")
 
-    if args.texture and args.pix_init == "real":
+    if args.texture and args.data_init == "real":
         print("WARNING: Using texture with real initialization will take a very long time to smooth out the boundaries between images.")
 
     if args.max_experts is not None and args.max_files is not None:
@@ -108,7 +108,7 @@ def main(args):
     for i, lab in tqdm(enumerate(labels_all)):
         indices_class[lab].append(i)
     images_all = torch.cat(images_all, dim=0).to('cpu')
-    sensor_all = torch.cat(sensor_all, dim=0).to('cpu')
+    sensor_all = torch.cat(sensor_all, dim=0).to('cpu') if sensor_all else torch.tensor([])
     labels_all = torch.tensor(labels_all, dtype=torch.long).to('cpu')
 
     if args.unimodal == 'sensor':
@@ -123,9 +123,24 @@ def main(args):
         print('real images channel %d, mean = %.4f, std = %.4f'%(ch, torch.mean(images_all[:, ch]), torch.std(images_all[:, ch])))
 
 
-    def get_images(c, n):  # get random n images from class c
+    def get_class_indices(c, n):
         idx_shuffle = np.random.permutation(indices_class[c])[:n]
+        return idx_shuffle
+
+
+    def get_images(c, n, idx_shuffle=None):  # get random n images from class c
+        if idx_shuffle is None:
+            idx_shuffle = get_class_indices(c, n)
         return images_all[idx_shuffle]
+
+
+    def get_sensors(c, n, idx_shuffle=None):  # get random n sensor samples from class c
+        if sensor_all.numel() == 0:
+            raise ValueError('Requested real sensor initialization, but the current dataset does not provide sensor data.')
+
+        if idx_shuffle is None:
+            idx_shuffle = get_class_indices(c, n)
+        return sensor_all[idx_shuffle]
 
 
     ''' initialize the synthetic data '''
@@ -136,21 +151,42 @@ def main(args):
     else:
         image_syn = torch.randn(size=(num_classes * args.ipc, channel, im_size[0], im_size[1]), dtype=torch.float)
 
+    if args.unimodal != 'model':
+        sensor_shape = sensor_all.shape[1:] if sensor_all.numel() > 0 else (args.n_input_features,)
+        if args.unimodal != 'image':
+            sensor_syn = torch.randn(size=(num_classes * args.ipc, *sensor_shape), dtype=torch.float)
+        else:
+            sensor_syn = torch.zeros(size=(num_classes * args.ipc, *sensor_shape), dtype=torch.float) # initialize with 0 for image-only
+
     syn_lr = torch.tensor(args.lr_teacher).to(args.device)
 
-    if args.pix_init == 'real':
+    if args.data_init == 'real':
         print('initialize synthetic data from random real images')
-        if args.texture:
-            for c in range(num_classes):
-                for i in range(args.canvas_size):
-                    for j in range(args.canvas_size):
-                        image_syn.data[c * args.ipc:(c + 1) * args.ipc, :, i * im_size[0]:(i + 1) * im_size[0],
-                        j * im_size[1]:(j + 1) * im_size[1]] = torch.cat(
-                            [get_images(c, 1).detach().data for s in range(args.ipc)])
-        for c in range(num_classes):
-            image_syn.data[c * args.ipc:(c + 1) * args.ipc] = get_images(c, args.ipc).detach().data
+        if args.unimodal != 'model' and args.unimodal != 'image':
+            print('initialize synthetic sensor data from random real sensor data')
+        with torch.no_grad():
+            if args.texture:
+                for c in range(num_classes):
+                    class_slice = slice(c * args.ipc, (c + 1) * args.ipc)
+                    for i in range(args.canvas_size):
+                        for j in range(args.canvas_size):
+                            image_syn[class_slice, :, i * im_size[0]:(i + 1) * im_size[0], j * im_size[1]:(j + 1) * im_size[1]] = torch.cat([get_images(c, 1) for _ in range(args.ipc)], dim=0)
+            else:
+                for c in range(num_classes):
+                    class_slice = slice(c * args.ipc, (c + 1) * args.ipc)
+                    class_indices = get_class_indices(c, args.ipc)
+                    image_syn[class_slice] = get_images(c, args.ipc, idx_shuffle=class_indices)
+                    if args.unimodal != 'model' and args.unimodal != 'image':
+                        sensor_syn[class_slice] = get_sensors(c, args.ipc, idx_shuffle=class_indices)
+
+            if args.unimodal != 'model' and args.unimodal != 'image' and args.texture:
+                for c in range(num_classes):
+                    class_slice = slice(c * args.ipc, (c + 1) * args.ipc)
+                    sensor_syn[class_slice] = get_sensors(c, args.ipc)
     else:
         print('initialize synthetic data from random noise')
+        if args.unimodal != 'model' and args.unimodal != 'image':
+            print('initialize synthetic sensor data from random noise')
 
 
     ''' training '''
@@ -160,12 +196,7 @@ def main(args):
     optimizer_lr = torch.optim.SGD([syn_lr], lr=args.lr_lr, momentum=0.5)
     optimizer_img.zero_grad()
 
-    # TODO different initialization for sensor modality?
     if args.unimodal != 'model':
-        if args.unimodal != 'image':
-            sensor_syn = torch.randn(size=(num_classes * args.ipc, args.n_input_features), dtype=torch.float)
-        else:
-            sensor_syn = torch.zeros(size=(num_classes * args.ipc, args.n_input_features), dtype=torch.float) # initialize with 0 for image-only            
         sensor_syn = sensor_syn.detach().to(args.device).requires_grad_(True)
         optimizer_sens = torch.optim.SGD([sensor_syn], lr=args.lr_img, momentum=0.5)
         optimizer_sens.zero_grad()
@@ -511,7 +542,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_syn', type=int, default=None, help='should only use this if you run out of VRAM')
     parser.add_argument('--batch_train', type=int, default=256, help='batch size for training networks')
 
-    parser.add_argument('--pix_init', type=str, default='real', choices=["noise", "real"],
+    parser.add_argument('--data_init', type=str, default='real', choices=["noise", "real"],
                         help='noise/real: initialize synthetic images from random noise or randomly sampled real images.')
 
     parser.add_argument('--dsa', type=str, default='True', choices=['True', 'False'],

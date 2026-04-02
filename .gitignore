@@ -10,3 +10,4 @@ ResearchLog.txt
 optuna*
 notebooks/
 *.pyc
+.codex
