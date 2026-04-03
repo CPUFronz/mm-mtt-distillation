@@ -11,3 +11,5 @@ optuna*
 notebooks/
 *.pyc
 .codex
+*.pt
+*.pth
