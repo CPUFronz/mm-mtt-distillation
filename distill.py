@@ -179,7 +179,7 @@ def main(args):
                     if args.unimodal != 'model' and args.unimodal != 'image':
                         sensor_syn[class_slice] = get_sensors(c, args.ipc, idx_shuffle=class_indices)
 
-            if args.unimodal != 'model' and args.unimodal != 'image' and args.texture:
+            if args.unimodal != 'model' and args.unimodal != 'image':
                 for c in range(num_classes):
                     class_slice = slice(c * args.ipc, (c + 1) * args.ipc)
                     sensor_syn[class_slice] = get_sensors(c, args.ipc)
@@ -187,6 +187,7 @@ def main(args):
         print('initialize synthetic data from random noise')
         if args.unimodal != 'model' and args.unimodal != 'image':
             print('initialize synthetic sensor data from random noise')
+            image_syn = torch.zeros_like(image_syn)
 
 
     ''' training '''
