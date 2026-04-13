@@ -787,3 +787,33 @@ class MultimodalPerceiver(nn.Module):
         
         decoded = self.perceiver(tok, queries=self.query.repeat(img.size(0),1,1))
         return self.out_proj(decoded.squeeze(1))           # (B, num_classes)
+
+
+class Widar_CNN3D(nn.Module):
+    def __init__(self, num_classes=6):
+        super().__init__()
+        self.conv1 = nn.Conv3d(1,   64,  kernel_size=3, padding=1)
+        self.conv2 = nn.Conv3d(64,  128, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv3d(128, 256, kernel_size=3, padding=1)
+        self.pool  = nn.MaxPool3d(2)
+        self.fc1   = nn.Linear(256 * 2 * 2 * 2, 512)
+        self.fc2   = nn.Linear(512, num_classes)
+
+    def forward(self, x):
+        # x: (B, 22, 20, 20)
+        x = x.unsqueeze(1)                          # (B, 1, 22, 20, 20)
+        x = self.pool(F.relu(self.conv1(x)))        # (B, 64, 11, 10, 10)
+        x = self.pool(F.relu(self.conv2(x)))        # (B, 128, 5, 5, 5)
+        x = self.pool(F.relu(self.conv3(x)))        # (B, 256, 2, 2, 2)
+        x = x.view(x.size(0), -1)                  # (B, 2048)
+        x = F.relu(self.fc1(x))                     # (B, 512)  ← features here
+        return self.fc2(x)                           # (B, num_classes)
+
+    def get_features(self, x):
+        """Returns 512-dim penultimate layer features — used for selection."""
+        x = x.unsqueeze(1)
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = self.pool(F.relu(self.conv3(x)))
+        x = x.view(x.size(0), -1)
+        return F.relu(self.fc1(x))                  # (B, 512)

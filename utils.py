@@ -12,7 +12,7 @@ import tqdm
 from torch.utils.data import Dataset
 from torchvision import datasets, transforms
 from scipy.ndimage.interpolation import rotate as scipyrotate
-from networks import MLP, ConvNet, LeNet, AlexNet, VGG11BN, VGG11, ResNet18, ResNet18BN_AP, ResNet18_AP
+from networks import MLP, ConvNet, LeNet, AlexNet, VGG11BN, VGG11, ResNet18, ResNet18BN_AP, ResNet18_AP, Widar_CNN3D
 
 class Config:
     imagenette = [0, 217, 482, 491, 497, 566, 569, 571, 574, 701]
@@ -237,6 +237,21 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         class_names = sorted(df['label'].unique().tolist())
         class_map = {x: x for x in range(num_classes)}
         class_map_inv = None
+
+    elif dataset == 'Widar':
+        widar_root = os.path.join(data_path, 'Widardata2')
+        dst_train = Widar_Dataset(os.path.join(widar_root, 'train'))
+        dst_test = Widar_Dataset(os.path.join(widar_root, 'test'))
+
+        channel = 22
+        im_size = (20, 20)
+        num_classes = len(dst_train.category)
+        mean = [0.0 for _ in range(channel)]
+        std = [1.0 for _ in range(channel)]
+        class_names = [os.path.basename(os.path.normpath(folder)) for folder in dst_train.folder]
+        class_map = {x: x for x in range(num_classes)}
+        class_map_inv = None
+
     #####################################################################
 
     else:
@@ -342,6 +357,8 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwar
         net = ResNet18BN_AP(channel=channel, num_classes=num_classes)
     elif model == 'ResNet18_AP':
         net = ResNet18_AP(channel=channel, num_classes=num_classes)
+    elif model == 'Widar_CNN3D':
+        net = Widar_CNN3D(num_classes=num_classes)
 
     elif model == 'ConvNetD1':
         net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=1, net_act=net_act, net_norm=net_norm, net_pooling=net_pooling, im_size=im_size)
@@ -1417,3 +1434,22 @@ class RoboMNISTDataset(Dataset):
             return image, label
         else:
             return (image, sensor_data), label
+
+
+class Widar_Dataset(Dataset):
+    def __init__(self, root_dir):
+        self.data_list = glob(root_dir + '/*/*.csv')
+        self.folder    = sorted(glob(root_dir + '/*/'))
+        self.category  = {self.folder[i].split('/')[-2]: i for i in range(len(self.folder))}
+
+    def __len__(self):
+        return len(self.data_list)
+
+    def __getitem__(self, idx):
+        path = self.data_list[idx]
+        y    = self.category[path.split('/')[-2]]
+        x    = np.genfromtxt(path, delimiter=',')
+        x    = (x - 0.0025) / 0.0119
+        x    = x.reshape(22, 20, 20)
+        x    = np.clip(x, -3, 3) / 3.0
+        return torch.FloatTensor(x), y
