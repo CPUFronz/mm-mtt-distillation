@@ -34,6 +34,9 @@ def main(args):
     args.dsa = True if args.dsa == 'True' else False
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+    if args.model not in ['MMSConvB', 'Perceiver']:
+        args.unimodal = 'model'
+
     eval_it_pool = np.arange(0, args.Iteration + 1, args.eval_it).tolist()
     channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, loader_train_dict, class_map, class_map_inv = get_dataset(args.dataset, args.data_path, args.batch_real, args.subset, args=args)
     model_eval_pool = get_eval_pool(args.eval_mode, args.model, args.model)
@@ -141,6 +144,14 @@ def main(args):
         if idx_shuffle is None:
             idx_shuffle = get_class_indices(c, n)
         return sensor_all[idx_shuffle]
+
+
+    def get_loggable_images(images):
+        if images.shape[1] in (1, 3):
+            return images
+
+        channel_idx = torch.linspace(0, images.shape[1] - 1, steps=3, device=images.device).round().long()
+        return images.index_select(1, channel_idx)
 
 
     ''' initialize the synthetic data '''
@@ -320,7 +331,7 @@ def main(args):
 
         if it in eval_it_pool and (save_this_it or it % 1000 == 0):
             with torch.no_grad():
-                image_save = image_syn.cuda()
+                image_save = image_syn.to(args.device)
 
                 save_dir = os.path.join(".", "logged_files", args.dataset, wandb.run.name)
 
@@ -337,7 +348,7 @@ def main(args):
                 wandb.log({"Pixels": wandb.Histogram(torch.nan_to_num(image_syn.detach().cpu()))}, step=it)
 
                 if args.ipc < 50 or args.force_save:
-                    upsampled = image_save
+                    upsampled = get_loggable_images(image_save)
                     if args.dataset != "ImageNet":
                         upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=2)
                         upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=3)
@@ -349,6 +360,7 @@ def main(args):
                         std = torch.std(image_save)
                         mean = torch.mean(image_save)
                         upsampled = torch.clip(image_save, min=mean-clip_val*std, max=mean+clip_val*std)
+                        upsampled = get_loggable_images(upsampled)
                         if args.dataset != "ImageNet":
                             upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=2)
                             upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=3)
@@ -361,7 +373,7 @@ def main(args):
 
                         torch.save(image_save.cpu(), os.path.join(save_dir, "images_zca_{}.pt".format(it)))
 
-                        upsampled = image_save
+                        upsampled = get_loggable_images(image_save)
                         if args.dataset != "ImageNet":
                             upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=2)
                             upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=3)
@@ -373,6 +385,7 @@ def main(args):
                             std = torch.std(image_save)
                             mean = torch.mean(image_save)
                             upsampled = torch.clip(image_save, min=mean - clip_val * std, max=mean + clip_val * std)
+                            upsampled = get_loggable_images(upsampled)
                             if args.dataset != "ImageNet":
                                 upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=2)
                                 upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=3)
