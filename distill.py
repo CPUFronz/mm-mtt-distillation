@@ -79,6 +79,37 @@ def main(args):
     args.dsa_param = dsa_params
     args.zca_trans = zca_trans
 
+    # Keep a single artifact collection per run so each eval snapshot becomes a new version.
+    eval_artifact_name = "distillation-eval-{}".format(wandb.run.id)
+    wandb.run.summary["eval_artifact_collection"] = eval_artifact_name
+
+    def log_eval_snapshot_artifact(iteration, file_paths, is_best=False):
+        if not file_paths:
+            return
+
+        artifact = wandb.Artifact(
+            name=eval_artifact_name,
+            type="distillation_eval",
+            description="Synthetic distillation snapshot saved during evaluation.",
+            metadata={
+                "iteration": int(iteration),
+                "run_id": wandb.run.id,
+                "run_name": wandb.run.name,
+                "dataset": args.dataset,
+                "is_best_so_far": bool(is_best),
+                "files": [os.path.basename(path) for path in file_paths],
+            },
+        )
+
+        for file_path in file_paths:
+            artifact.add_file(file_path, name=os.path.basename(file_path))
+
+        aliases = ["latest", "iter_{}".format(int(iteration))]
+        if is_best:
+            aliases.append("best_so_far")
+
+        wandb.run.log_artifact(artifact, aliases=aliases)
+
     if args.batch_syn is None:
         args.batch_syn = num_classes * args.ipc
 
@@ -338,12 +369,31 @@ def main(args):
                 if not os.path.exists(save_dir):
                     os.makedirs(save_dir)
 
-                torch.save(image_save.cpu(), os.path.join(save_dir, "images_{}.pt".format(it)))
-                torch.save(label_syn.cpu(), os.path.join(save_dir, "labels_{}.pt".format(it)))
+                artifact_files = []
+
+                image_path = os.path.join(save_dir, "images_{}.pt".format(it))
+                label_path = os.path.join(save_dir, "labels_{}.pt".format(it))
+                torch.save(image_save.cpu(), image_path)
+                torch.save(label_syn.cpu(), label_path)
+                artifact_files.extend([image_path, label_path])
 
                 if save_this_it:
-                    torch.save(image_save.cpu(), os.path.join(save_dir, "images_best.pt".format(it)))
-                    torch.save(label_syn.cpu(), os.path.join(save_dir, "labels_best.pt".format(it)))
+                    image_best_path = os.path.join(save_dir, "images_best.pt")
+                    label_best_path = os.path.join(save_dir, "labels_best.pt")
+                    torch.save(image_save.cpu(), image_best_path)
+                    torch.save(label_syn.cpu(), label_best_path)
+                    artifact_files.extend([image_best_path, label_best_path])
+
+                if args.unimodal != 'model':
+                    sensor_tensor = sensor_syn.detach().cpu()
+                    sensor_path = os.path.join(save_dir, "sensor_{}.pt".format(it))
+                    torch.save(sensor_tensor, sensor_path)
+                    artifact_files.append(sensor_path)
+
+                    if save_this_it:
+                        sensor_best_path = os.path.join(save_dir, "sensor_best.pt")
+                        torch.save(sensor_tensor, sensor_best_path)
+                        artifact_files.append(sensor_best_path)
 
                 wandb.log({"Pixels": wandb.Histogram(torch.nan_to_num(image_syn.detach().cpu()))}, step=it)
 
@@ -371,7 +421,9 @@ def main(args):
                         image_save = image_save.cpu() # modifedy by Franz
                         image_save = args.zca_trans.inverse_transform(image_save)
 
-                        torch.save(image_save.cpu(), os.path.join(save_dir, "images_zca_{}.pt".format(it)))
+                        zca_path = os.path.join(save_dir, "images_zca_{}.pt".format(it))
+                        torch.save(image_save.cpu(), zca_path)
+                        artifact_files.append(zca_path)
 
                         upsampled = get_loggable_images(image_save)
                         if args.dataset != "ImageNet":
@@ -394,10 +446,12 @@ def main(args):
                                 torch.nan_to_num(grid.detach().cpu()))}, step=it)
 
                     if args.unimodal != 'model':
-                        sensor_save = sensor_syn.cpu().detach().numpy()
+                        sensor_save = sensor_tensor.numpy()
                         sensor_save = dst_test.scaler.inverse_transform(sensor_save)
                         sensor_save_df = pd.DataFrame(sensor_save, columns=dst_test.scaler.get_feature_names_out())
                         wandb.log({'Synthetic_Sensors': wandb.Table(dataframe=sensor_save_df)}, step=it)
+
+                log_eval_snapshot_artifact(it, artifact_files, is_best=save_this_it)
 
         wandb.log({"Synthetic_LR": syn_lr.detach().cpu()}, step=it)
 
