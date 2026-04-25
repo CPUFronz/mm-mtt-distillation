@@ -1,3 +1,7 @@
+# TODO: This file is still work in progress. My next steps would be to 
+#        - add augmentations, to see how they influence the training
+#        - add computation of traces, similar to Yang, William, et al. "What is dataset distillation learning?." arXiv preprint arXiv:2406.04284 (2024).
+
 import argparse
 import os
 from pathlib import Path
