@@ -474,11 +474,6 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwar
     return net
 
 
-
-def get_time():
-    return str(time.strftime("[%Y-%m-%d %H:%M:%S]", time.localtime()))
-
-
 def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False):
     loss_avg, acc_avg, num_exp = 0, 0, 0
     net = net.to(args.device)
@@ -582,7 +577,7 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
 
     time_train = time.time() - start
 
-    print('%s Evaluate_%02d: epoch = %04d train time = %d s train loss = %.6f train acc = %.4f, test acc = %.4f' % (get_time(), it_eval, Epoch, int(time_train), loss_train, acc_train, acc_test))
+    print('Evaluate_%02d: epoch = %04d train time = %d s train loss = %.6f train acc = %.4f, test acc = %.4f' % (it_eval, Epoch, int(time_train), loss_train, acc_train, acc_test))
 
     if return_loss:
         return net, acc_train_list, acc_test, loss_train_list, loss_test
