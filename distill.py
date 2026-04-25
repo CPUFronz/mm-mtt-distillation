@@ -236,18 +236,15 @@ def main(args):
     image_syn = image_syn.detach().to(args.device).requires_grad_(True)
     syn_lr = syn_lr.detach().to(args.device).requires_grad_(True)
     optimizer_img = torch.optim.SGD([image_syn], lr=args.lr_img, momentum=0.5)
-    optimizer_lr = torch.optim.SGD([syn_lr], lr=args.lr_lr, momentum=0.5)
-    optimizer_img.zero_grad()
+    optimizer_lr = torch.optim.SGD([syn_lr], lr=args.lr_lr, momentum=0.5)    
 
     if args.unimodal != 'model':
         sensor_syn = sensor_syn.detach().to(args.device).requires_grad_(True)
         optimizer_sens = torch.optim.SGD([sensor_syn], lr=args.lr_img, momentum=0.5)
-        optimizer_sens.zero_grad()
 
     #######################################################################
 
     criterion = nn.CrossEntropyLoss().to(args.device)
-    print('%s training begins'%get_time())
 
     expert_dir = os.path.join(args.buffer_path, args.dataset)
     if args.dataset == "ImageNet":
@@ -572,7 +569,17 @@ def main(args):
             del _
 
         if it%10 == 0:
-            print('%s iter = %04d, loss = %.4f' % (get_time(), it, grand_loss.item()))
+            print('iter = %04d, loss = %.4f' % (it, grand_loss.item()))
+
+            # TODO: Shadi's code, eventually remove:
+            # ── IMAGE_SYN STATISTICS CHECK ────────────────────
+            print(f"  img_mean={image_syn.mean().item():.4f} | "
+                  f"img_std={image_syn.std().item():.4f} | "
+                  f"img_min={image_syn.min().item():.4f} | "
+                  f"img_max={image_syn.max().item():.4f} | "
+                  f"grad_norm={image_syn.grad.norm().item():.4f} | "
+                  f"syn_lr={syn_lr.item():.6f}")
+            # ─────────────────────────────────────────────────
 
     wandb.finish()
 
