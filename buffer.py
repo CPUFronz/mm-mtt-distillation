@@ -16,6 +16,7 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 def main(args, trial=None):
+    fix_seed(args.seed)
 
     args.dsa = True if args.dsa == 'True' else False
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'

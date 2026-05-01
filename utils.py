@@ -338,7 +338,7 @@ def get_default_convnet_setting():
 def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwargs):
     init_seed = kwargs.pop('init_seed', None)
     if init_seed is None:
-        torch.random.manual_seed(int(time.time() * 1000) % 100000)
+        torch.random.manual_seed(0)
     else:
         torch.random.manual_seed(int(init_seed))
     net_width, net_depth, net_act, net_norm, net_pooling = get_default_convnet_setting()
@@ -923,6 +923,7 @@ def fix_seed(seed):
     except Exception:
         pass
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":16:8")
+    os.environ.setdefault("PYTHONHASHSEED", f"{seed}")
 
 
 class MultimodalTensorDataset(Dataset):

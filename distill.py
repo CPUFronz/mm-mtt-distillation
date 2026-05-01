@@ -19,6 +19,7 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 def main(args):
+    fix_seed(args.seed) # added by Franz
 
     if args.zca and args.texture:
         raise AssertionError("Cannot use zca and texture together")
@@ -292,8 +293,6 @@ def main(args):
         #######################################################################
         # added by Franz
         #######################################################################
-        
-        fix_seed(args.seed + it)
 
         kwargs = {
             'unimodal': args.unimodal if hasattr(args, 'unimodal') else '',
