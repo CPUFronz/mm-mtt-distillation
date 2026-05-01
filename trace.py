@@ -28,25 +28,6 @@ MULTIMODAL_MODELS = {"MMSConvB", "Perceiver"}
 WANDB_PROJECT = "SyntheticTraining"
 
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Train the evaluation model on a distilled snapshot from a W&B distillation run.")
-    parser.add_argument("run_id", type=str, help="W&B distillation run id. You can also pass entity/project/run_id.")
-    parser.add_argument("--iteration",type=int, default=None, help="Specific distillation iteration to load. Defaults to the best saved snapshot.")
-    parser.add_argument("--entity", type=str, default=os.environ.get("WANDB_ENTITY"), help="Optional W&B entity when run_id is not fully qualified.")
-    parser.add_argument("--project", type=str, default="DatasetDistillation", help="W&B project that contains the distillation run.")
-    parser.add_argument("--epoch_eval_train", "--train_epochs", dest="train_epochs", type=int,default=None, help="Override the number of evaluation-training epochs. Defaults to epoch_eval_train from the distill run.",)
-    parser.add_argument("--lr", "--train_lr", dest="train_lr", type=float, default=None, help="Override the evaluation learning rate. Defaults to Synthetic_LR at the selected iteration.")
-    parser.add_argument("--batch_train", type=int, default=None, help="Override the synthetic training batch size. Defaults to batch_train from the distill run.")
-    parser.add_argument("--batch_test", type=int, default=None, help="Override the real test batch size. Defaults to 128.")
-    parser.add_argument("--data_path", type=str, default=None, help="Override the dataset path stored in the distill run config.")
-    parser.add_argument("--seed", type=int, default=None, help="Override the seed from the distill run config.")
-    parser.add_argument("--device", type=str, default=None, choices=["cpu", "cuda"], help="Device to use. Defaults to cuda when available.")
-    parser.add_argument("--momentum", type=float, default=0.9, help="Momentum for the evaluation SGD optimizer.")
-    parser.add_argument("--weight_decay", type=float, default=5e-4, help="Weight decay for the evaluation SGD optimizer.")
-    parser.add_argument("--download_dir", type=str, default="./logged_files/traces",help="Directory used to download the selected W&B artifact.")
-    return parser.parse_args()
-
-
 def normalize_bool(value):
     if isinstance(value, bool):
         return value
@@ -239,8 +220,7 @@ def build_synthetic_dataset(images, labels, sensors=None):
     return MultimodalTensorDataset(images, sensors, labels)
 
 
-def main():
-    cli_args = parse_args()
+def main(cli_args):
     device = cli_args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     if device == "cuda" and not torch.cuda.is_available():
         raise ValueError("CUDA was requested, but no CUDA device is available.")
@@ -385,4 +365,22 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Train the evaluation model on a distilled snapshot from a W&B distillation run.")
+    parser.add_argument("run_id", type=str, help="W&B distillation run id. You can also pass entity/project/run_id.")
+    parser.add_argument("--iteration",type=int, default=None, help="Specific distillation iteration to load. Defaults to the best saved snapshot.")
+    parser.add_argument("--entity", type=str, default=os.environ.get("WANDB_ENTITY"), help="Optional W&B entity when run_id is not fully qualified.")
+    parser.add_argument("--project", type=str, default="DatasetDistillation", help="W&B project that contains the distillation run.")
+    parser.add_argument("--epoch_eval_train", "--train_epochs", dest="train_epochs", type=int,default=None, help="Override the number of evaluation-training epochs. Defaults to epoch_eval_train from the distill run.",)
+    parser.add_argument("--lr", "--train_lr", dest="train_lr", type=float, default=None, help="Override the evaluation learning rate. Defaults to Synthetic_LR at the selected iteration.")
+    parser.add_argument("--batch_train", type=int, default=None, help="Override the synthetic training batch size. Defaults to batch_train from the distill run.")
+    parser.add_argument("--batch_test", type=int, default=None, help="Override the real test batch size. Defaults to 128.")
+    parser.add_argument("--data_path", type=str, default=None, help="Override the dataset path stored in the distill run config.")
+    parser.add_argument("--seed", type=int, default=42, help="Override the seed from the distill run config.")
+    parser.add_argument("--device", type=str, default=None, choices=["cpu", "cuda"], help="Device to use. Defaults to cuda when available.")
+    parser.add_argument("--momentum", type=float, default=0.9, help="Momentum for the evaluation SGD optimizer.")
+    parser.add_argument("--weight_decay", type=float, default=5e-4, help="Weight decay for the evaluation SGD optimizer.")
+    parser.add_argument("--download_dir", type=str, default="./logged_files/traces",help="Directory used to download the selected W&B artifact.")
+    parser.add_argument('--dsa_strategy', type=str, default='color_crop_cutout_flip_scale_rotate', help='differentiable Siamese augmentation strategy')
+
+    args = parser.parse_args()
+    main(args)
