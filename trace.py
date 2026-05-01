@@ -107,7 +107,7 @@ def build_run_args(run_config):
     args.lr_teacher = float(getattr(args, "lr_teacher", 0.01))
     args.seed = int(getattr(args, "seed", 42))
     args.res = int(getattr(args, "res", 128))
-    args.dsa_param = ParamDiffAug()
+    args.dsa_param = ParamDiffAug.copy()
     args.dc_aug_param = None if args.dsa else get_daparam(args.dataset, args.model, args.model, getattr(args, "ipc", None))
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
 

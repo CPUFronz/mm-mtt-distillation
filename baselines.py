@@ -89,7 +89,7 @@ def main(args):
     channel, im_size, num_classes, _class_names, _mean, _std, dst_train, _dst_test, testloader, _loader_train_dict, class_map, _class_map_inv = get_dataset(args.dataset, args.data_path, args.batch_real, args.subset, args=args)
 
     args.im_size = im_size
-    args.dsa_param = ParamDiffAug()
+    args.dsa_param = ParamDiffAug.copy()
     if args.dsa:
         args.dc_aug_param = None
     else:

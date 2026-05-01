@@ -56,7 +56,7 @@ def main(args):
         # args.epoch_eval_train = 1000
         args.dc_aug_param = None
 
-    args.dsa_param = ParamDiffAug()
+    args.dsa_param = ParamDiffAug.copy()
 
     dsa_params = args.dsa_param
     if args.zca:
@@ -310,7 +310,7 @@ def main(args):
                 print('-------------------------\nEvaluation\nmodel_train = %s, model_eval = %s, iteration = %d'%(args.model, model_eval, it))
                 if args.dsa:
                     print('DSA augmentation strategy: \n', args.dsa_strategy)
-                    print('DSA augmentation parameters: \n', args.dsa_param.__dict__)
+                    print('DSA augmentation parameters: \n', args.dsa_param)
                 else:
                     print('DC augmentation parameters: \n', args.dc_aug_param)
 

@@ -20,7 +20,7 @@ def main(args, trial=None):
 
     args.dsa = True if args.dsa == 'True' else False
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    args.dsa_param = ParamDiffAug()
+    args.dsa_param = ParamDiffAug.copy()
 
     if args.model not in ['MMSConvB', 'Perceiver']:
         args.unimodal = 'model'
