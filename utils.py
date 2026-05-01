@@ -336,11 +336,6 @@ def get_default_convnet_setting():
 
 
 def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwargs):
-    init_seed = kwargs.pop('init_seed', None)
-    if init_seed is None:
-        torch.random.manual_seed(0)
-    else:
-        torch.random.manual_seed(int(init_seed))
     net_width, net_depth, net_act, net_norm, net_pooling = get_default_convnet_setting()
 
     if model == 'MLP':
@@ -1043,7 +1038,7 @@ def load_raspicar_data(args, root='./data/raspicar/'):
 
     df = pd.DataFrame()
     for dirpath, _, fnames in os.walk(root):
-        for f in fnames:
+        for f in sorted(fnames):
             if f == 'frame_log.csv':
                 log_df  = pd.read_csv(dirpath + '/frame_log.csv')
                 pico_df = pd.read_csv(dirpath + '/pico_data.csv')
