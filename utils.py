@@ -696,185 +696,284 @@ def get_eval_pool(eval_mode, model, model_eval):
         model_eval_pool = [model_eval]
     return model_eval_pool
 
+#####################################################################
+# added by Shadi and Franz
+#####################################################################
+ParamDiffAug = {  # shadi version 21 April
+    'aug_mode': 'S',  # 'S': pick one randomly, 'M': apply all
+    # Velocity-space (H, W) params
+    'prob_flip_h': 0.5,  # P(flip x-velocity axis) - left/right gesture
+    'prob_flip_w': 0.5,  # P(flip y-velocity axis) - fwd/back gesture
+    'ratio_scale': 1.1,  # velocity bin scaling range
+    'ratio_crop_pad': 0.125,  # velocity-space translation ratio
+    'ratio_cutout': 0.5,  # velocity-space cutout size (fraction of H,W)
+    # Temporal (T) params
+    'max_temporal_shift': 4,  # max frames to roll +/- along T
+    'ratio_temporal_cutout': 0.05,  # fraction of T frames to zero out
+    'prob_temporal_flip': 0.5,  # P(reverse time axis)
+    # Amplitude params
+    'amplitude': 0.3,  # uniform scale in [1 - amp/2, 1 + amp/2]
+    'noise': 0.03,  # Gaussian noise std
+    # Internal
+    'batchmode': False,
+}
 
-class ParamDiffAug():
-    def __init__(self):
-        self.aug_mode = 'S' #'multiple or single'
-        self.prob_flip = 0.5
-        self.ratio_scale = 1.2
-        self.ratio_rotate = 15.0
-        self.ratio_crop_pad = 0.125
-        self.ratio_cutout = 0.5 # the size would be 0.5x0.5
-        self.ratio_noise = 0.05
-        self.brightness = 1.0
-        self.saturation = 2.0
-        self.contrast = 0.5
 
+def DiffAugment(x, strategy='', seed=-1, param=None):
+    """
+    Differentiable augmentation for BVP data.
 
-def set_seed_DiffAug(param):
-    if param.latestseed == -1:
-        return
-    else:
-        torch.random.manual_seed(param.latestseed)
-        param.latestseed += 1
+    Args:
+        x        : Tensor [B, T, H, W]
+        strategy : '-'-separated aug names, e.g. 'flip_h-noise-temporal_shift-scale'
+                   Use '|' NOT '_' as separator (aug names contain underscores).
+        seed     : -1 for sample-wise random, else batch-wise random
+        param    : ParamDiffAug dict
 
-
-def DiffAugment(x, strategy='', seed = -1, param = None):
+    Returns:
+        Augmented tensor [B, T, H, W]
+    """
     if seed == -1:
-        param.batchmode = False
+        param['batchmode'] = False
     else:
-        param.batchmode = True
+        param['batchmode'] = True
 
-    param.latestseed = seed
-
-    if strategy == 'None' or strategy == 'none':
+    if not strategy or strategy.lower() == 'none':
         return x
 
-    if strategy:
-        if param.aug_mode == 'M': # original
-            for p in strategy.split('_'):
+    # Franz: the original code uses '_' as separator, but it was supposed to be '|'
+    augs = strategy.split('-')   # <-- '-' separator avoids clashing with '_' in names
+
+    if param['aug_mode'] == 'M':    # apply every aug in the strategy
+        for p in augs:
+            if p in AUGMENT_FNS:
                 for f in AUGMENT_FNS[p]:
                     x = f(x, param)
-        elif param.aug_mode == 'S':
-            pbties = strategy.split('_')
-            set_seed_DiffAug(param)
-            p = pbties[torch.randint(0, len(pbties), size=(1,)).item()]
+    elif param['aug_mode'] == 'S':  # pick one aug randomly
+        p = augs[torch.randint(0, len(augs), size=(1,)).item()]
+        if p in AUGMENT_FNS:
             for f in AUGMENT_FNS[p]:
                 x = f(x, param)
-        else:
-            exit('Error ZH: unknown augmentation mode.')
-        x = x.contiguous()
-    return x
 
+    return x.contiguous()
 
-# We implement the following differentiable augmentation strategies based on the code provided in https://github.com/mit-han-lab/data-efficient-gans.
-def rand_scale(x, param):
-    # x>1, max scale
-    # sx, sy: (0, +oo), 1: orignial size, 0.5: enlarge 2 times
-    ratio = param.ratio_scale
-    set_seed_DiffAug(param)
-    sx = torch.rand(x.shape[0]) * (ratio - 1.0/ratio) + 1.0/ratio
-    set_seed_DiffAug(param)
-    sy = torch.rand(x.shape[0]) * (ratio - 1.0/ratio) + 1.0/ratio
-    theta = [[[sx[i], 0,  0],
-            [0,  sy[i], 0],] for i in range(x.shape[0])]
-    theta = torch.tensor(theta, dtype=torch.float)
-    if param.batchmode: # batch-wise:
-        theta[:] = theta[0]
-    grid = F.affine_grid(theta, x.shape, align_corners=True).to(x.device)
-    x = F.grid_sample(x, grid, align_corners=True)
-    return x
-
-
-def rand_rotate(x, param): # [-180, 180], 90: anticlockwise 90 degree
-    ratio = param.ratio_rotate
-    set_seed_DiffAug(param)
-    theta = (torch.rand(x.shape[0]) - 0.5) * 2 * ratio / 180 * float(np.pi)
-    theta = [[[torch.cos(theta[i]), torch.sin(-theta[i]), 0],
-        [torch.sin(theta[i]), torch.cos(theta[i]),  0],]  for i in range(x.shape[0])]
-    theta = torch.tensor(theta, dtype=torch.float)
-    if param.batchmode: # batch-wise:
-        theta[:] = theta[0]
-    grid = F.affine_grid(theta, x.shape, align_corners=True).to(x.device)
-    x = F.grid_sample(x, grid, align_corners=True)
-    return x
-
-
-def rand_flip(x, param):
-    prob = param.prob_flip
-    set_seed_DiffAug(param)
+def rand_flip_h(x, param):
+    """
+    Flip x-velocity axis (H, dim=2).
+    Physical meaning: mirrors the gesture left ↔ right.
+    ⚠ Skip if 'slide_left' and 'slide_right' are different class labels.
+    """
     randf = torch.rand(x.size(0), 1, 1, 1, device=x.device)
-    if param.batchmode: # batch-wise:
+    if param['batchmode']:
         randf[:] = randf[0]
-    return torch.where(randf < prob, x.flip(3), x)
+    return torch.where(randf < param['prob_flip_h'], x.flip(2), x)
 
 
-def rand_brightness(x, param):
-    ratio = param.brightness
-    set_seed_DiffAug(param)
-    randb = torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device)
-    if param.batchmode:  # batch-wise:
-        randb[:] = randb[0]
-    x = x + (randb - 0.5)*ratio
-    return x
+def rand_flip_w(x, param):
+    """
+    Flip y-velocity axis (W, dim=3).
+    Physical meaning: mirrors the gesture forward ↔ backward.
+    """
+    randf = torch.rand(x.size(0), 1, 1, 1, device=x.device)
+    if param['batchmode']:
+        randf[:] = randf[0]
+    return torch.where(randf < param['prob_flip_w'], x.flip(3), x)
 
 
-def rand_saturation(x, param):
-    ratio = param.saturation
-    x_mean = x.mean(dim=1, keepdim=True)
-    set_seed_DiffAug(param)
-    rands = torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device)
-    if param.batchmode:  # batch-wise:
-        rands[:] = rands[0]
-    x = (x - x_mean) * (rands * ratio) + x_mean
-    return x
+def rand_scale_velocity(x, param):
+    """
+    Scale velocity bins via affine grid (H, W).
+    Physical meaning: simulates different body-to-antenna distances
+    (further away → compressed velocity distribution).
+    Note: affine_grid treats T as 'channels' and scales H,W identically ✓
+    """
+    ratio = param['ratio_scale']
+    sx = torch.rand(x.shape[0]) * (ratio - 1.0 / ratio) + 1.0 / ratio
+    sy = torch.rand(x.shape[0]) * (ratio - 1.0 / ratio) + 1.0 / ratio
+    theta = [[[sx[i], 0,    0],
+              [0,    sy[i], 0]] for i in range(x.shape[0])]
+    theta = torch.tensor(theta, dtype=torch.float)
+    if param['batchmode']:
+        theta[:] = theta[0]
+    grid = F.affine_grid(theta, x.shape, align_corners=True).to(x.device)
+    return F.grid_sample(x, grid, align_corners=True)
 
+def rand_translate_velocity(x, param):
+    """
+    Translate in velocity space (H, W) with wrap-around padding.
+    Physical meaning: slightly different body orientation relative to antennas.
+    """
+    ratio    = param['ratio_crop_pad']
+    shift_h  = int(x.size(2) * ratio + 0.5)
+    shift_w  = int(x.size(3) * ratio + 0.5)
+    trans_h = torch.randint(-shift_h, shift_h + 1, size=[x.size(0), 1, 1], device=x.device)
+    trans_w = torch.randint(-shift_w, shift_w + 1, size=[x.size(0), 1, 1], device=x.device)
+    if param['batchmode']:
+        trans_h[:] = trans_h[0]
+        trans_w[:] = trans_w[0]
 
-def rand_contrast(x, param):
-    ratio = param.contrast
-    x_mean = x.mean(dim=[1, 2, 3], keepdim=True)
-    set_seed_DiffAug(param)
-    randc = torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device)
-    if param.batchmode:  # batch-wise:
-        randc[:] = randc[0]
-    x = (x - x_mean) * (randc + ratio) + x_mean
-    return x
-
-
-def rand_crop(x, param):
-    # The image is padded on its surrounding and then cropped.
-    ratio = param.ratio_crop_pad
-    shift_x, shift_y = int(x.size(2) * ratio + 0.5), int(x.size(3) * ratio + 0.5)
-    set_seed_DiffAug(param)
-    translation_x = torch.randint(-shift_x, shift_x + 1, size=[x.size(0), 1, 1], device=x.device)
-    set_seed_DiffAug(param)
-    translation_y = torch.randint(-shift_y, shift_y + 1, size=[x.size(0), 1, 1], device=x.device)
-    if param.batchmode:  # batch-wise:
-        translation_x[:] = translation_x[0]
-        translation_y[:] = translation_y[0]
-    grid_batch, grid_x, grid_y = torch.meshgrid(
+    grid_b, grid_h, grid_w = torch.meshgrid(
         torch.arange(x.size(0), dtype=torch.long, device=x.device),
         torch.arange(x.size(2), dtype=torch.long, device=x.device),
         torch.arange(x.size(3), dtype=torch.long, device=x.device),
     )
-    grid_x = torch.clamp(grid_x + translation_x + 1, 0, x.size(2) + 1)
-    grid_y = torch.clamp(grid_y + translation_y + 1, 0, x.size(3) + 1)
+    grid_h = torch.clamp(grid_h + trans_h + 1, 0, x.size(2) + 1)
+    grid_w = torch.clamp(grid_w + trans_w + 1, 0, x.size(3) + 1)
+
+    # pad H and W by 1 on each side, keep T (dim=1) unchanged
     x_pad = F.pad(x, [1, 1, 1, 1, 0, 0, 0, 0])
-    x = x_pad.permute(0, 2, 3, 1).contiguous()[grid_batch, grid_x, grid_y].permute(0, 3, 1, 2)
+    # [B, T, H_pad, W_pad] → permute → [B, H_pad, W_pad, T] → index → permute back
+    x = x_pad.permute(0, 2, 3, 1).contiguous()[grid_b, grid_h, grid_w].permute(0, 3, 1, 2)
     return x
 
 
-def rand_cutout(x, param):
-    ratio = param.ratio_cutout
-    cutout_size = int(x.size(2) * ratio + 0.5), int(x.size(3) * ratio + 0.5)
-    set_seed_DiffAug(param)
-    offset_x = torch.randint(0, x.size(2) + (1 - cutout_size[0] % 2), size=[x.size(0), 1, 1], device=x.device)
-    set_seed_DiffAug(param)
-    offset_y = torch.randint(0, x.size(3) + (1 - cutout_size[1] % 2), size=[x.size(0), 1, 1], device=x.device)
-    if param.batchmode:  # batch-wise:
-        offset_x[:] = offset_x[0]
-        offset_y[:] = offset_y[0]
-    grid_batch, grid_x, grid_y = torch.meshgrid(
-        torch.arange(x.size(0), dtype=torch.long, device=x.device),
-        torch.arange(cutout_size[0], dtype=torch.long, device=x.device),
-        torch.arange(cutout_size[1], dtype=torch.long, device=x.device),
+def rand_cutout_velocity(x, param):
+    """
+    Zero out a rectangular patch in velocity space (H, W) for all T frames.
+    Physical meaning: simulates partial antenna occlusion or dead velocity bins.
+    """
+    cutout_h = int(x.size(2) * param['ratio_cutout'] + 0.5)
+    cutout_w = int(x.size(3) * param['ratio_cutout'] + 0.5)
+    off_h = torch.randint(0, x.size(2) + (1 - cutout_h % 2),
+                          size=[x.size(0), 1, 1], device=x.device)
+    off_w = torch.randint(0, x.size(3) + (1 - cutout_w % 2),
+                          size=[x.size(0), 1, 1], device=x.device)
+    if param['batchmode']:
+        off_h[:] = off_h[0]
+        off_w[:] = off_w[0]
+
+    grid_b, grid_h, grid_w = torch.meshgrid(
+        torch.arange(x.size(0),  dtype=torch.long, device=x.device),
+        torch.arange(cutout_h,   dtype=torch.long, device=x.device),
+        torch.arange(cutout_w,   dtype=torch.long, device=x.device),
     )
-    grid_x = torch.clamp(grid_x + offset_x - cutout_size[0] // 2, min=0, max=x.size(2) - 1)
-    grid_y = torch.clamp(grid_y + offset_y - cutout_size[1] // 2, min=0, max=x.size(3) - 1)
-    mask = torch.ones(x.size(0), x.size(2), x.size(3), dtype=x.dtype, device=x.device)
-    mask[grid_batch, grid_x, grid_y] = 0
-    x = x * mask.unsqueeze(1)
-    return x
+    grid_h = torch.clamp(grid_h + off_h - cutout_h // 2, 0, x.size(2) - 1)
+    grid_w = torch.clamp(grid_w + off_w - cutout_w // 2, 0, x.size(3) - 1)
 
+    mask = torch.ones(x.size(0), x.size(2), x.size(3), dtype=x.dtype, device=x.device)
+    mask[grid_b, grid_h, grid_w] = 0
+    return x * mask.unsqueeze(1)  # broadcast mask over all T frames
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  TEMPORAL AUGMENTATIONS  (operate on T=dim1)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def rand_temporal_shift(x, param):
+    """
+    Key insight: reshape T to the spatial WIDTH dimension,
+    then affine_grid + grid_sample gives continuous bilinear shift along T.
+    Gradient flows smoothly back to x_syn through interpolated frames. ✓
+    """
+    B, T, H, W = x.shape
+
+    # Normalized continuous shift in [-1, 1] space
+    max_norm = param['max_temporal_shift'] / (T / 2.0)
+    shifts   = (torch.rand(B, device=x.device) * 2 - 1) * max_norm  # float ✓
+    if param['batchmode']:
+        shifts[:] = shifts[0]
+
+    # ── Reshape: [B, T, H, W] → [B, H*W, 1, T] ─────────────────────────────
+    #    H*W acts as "channels", T is now the spatial width → grid_sample works ✓
+    x_r = x.permute(0, 2, 3, 1).reshape(B, H * W, 1, T)
+
+    # ── Pure translation along T (width dimension) ───────────────────────────
+    theta = torch.zeros(B, 2, 3, device=x.device, dtype=x.dtype)
+    theta[:, 0, 0] = 1.0
+    theta[:, 1, 1] = 1.0
+    theta[:, 0, 2] = shifts   # shift along T axis only
+
+    grid      = F.affine_grid(theta, x_r.shape, align_corners=True)
+    x_shifted = F.grid_sample(
+        x_r, grid,
+        mode='bilinear',         # smooth interpolation between frames ✓
+        align_corners=True,
+        padding_mode='border'    # clamp at boundary frames (not wrap-around)
+    )
+
+    # ── Reshape back: [B, H*W, 1, T] → [B, T, H, W] ─────────────────────────
+    return x_shifted.reshape(B, H, W, T).permute(0, 3, 1, 2)
+
+
+def rand_temporal_flip(x, param):
+    """
+    Reverse the T axis (time-reverse the gesture).
+    Physical meaning: reversed motion — only valid if class label is symmetric
+    (e.g. 'push' reversed ≠ 'push', so use carefully or only for symmetric gestures).
+    """
+    randf = torch.rand(x.size(0), device=x.device)
+    if param['batchmode']:
+        randf[:] = randf[0]
+    # flip(1) reverses T; stack keeps gradient
+    flipped = x.flip(1)
+    mask = (randf < param['prob_temporal_flip'])[:, None, None, None]
+    return torch.where(mask, flipped, x)
+
+
+def rand_temporal_cutout(x, param):
+    """
+    Zero out a contiguous block of T frames.
+    Physical meaning: missing CSI packets / person momentarily still.
+    x.clone() ensures gradient flows through non-zeroed frames.
+    """
+    T          = x.size(1)
+    cutout_len = max(1, int(T * param['ratio_temporal_cutout']))
+    offset = torch.randint(0, T - cutout_len + 1,
+                           size=[x.size(0)], device=x.device)
+    if param['batchmode']:
+        offset[:] = offset[0]
+
+    mask = torch.ones(x.size(0), T, 1, 1, dtype=x.dtype, device=x.device)
+    for i in range(x.size(0)):
+        mask[i, offset[i]: offset[i] + cutout_len] = 0
+    return x * mask
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  AMPLITUDE AUGMENTATIONS  (operate on all dims)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def rand_amplitude(x, param):
+    """
+    Multiply entire BVP map by a per-sample random scalar.
+    Physical meaning: signal strength variation due to distance / environment.
+    """
+    scale = (torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device)
+             * param['amplitude'] + (1.0 - param['amplitude'] / 2))
+    if param['batchmode']:
+        scale[:] = scale[0]
+    return x * scale
+
+
+def rand_noise(x, param):
+    """
+    Add per-sample Gaussian noise.
+    Physical meaning: multipath interference and thermal noise in CSI.
+    """
+    return x + param['noise'] * torch.randn_like(x)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  REGISTRY
+# ─────────────────────────────────────────────────────────────────────────────
 
 AUGMENT_FNS = {
-    'color': [rand_brightness, rand_saturation, rand_contrast],
-    'crop': [rand_crop],
-    'cutout': [rand_cutout],
-    'flip': [rand_flip],
-    'scale': [rand_scale],
-    'rotate': [rand_rotate],
+    # velocity-space
+    'fliph':          [rand_flip_h],
+    'flipw':          [rand_flip_w],
+    'flip':            [rand_flip_h, rand_flip_w],
+    'scale':           [rand_scale_velocity],
+    'translate':       [rand_translate_velocity],
+    'cutout':          [rand_cutout_velocity],
+    # temporal
+    'temporalshift':  [rand_temporal_shift],
+    'temporalflip':   [rand_temporal_flip],
+    'temporalcutout': [rand_temporal_cutout],
+    # amplitude
+    'amplitude':       [rand_amplitude],
+    'noise':           [rand_noise],
 }
+#####################################################################
 
 
 #####################################################################
