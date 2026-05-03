@@ -26,6 +26,8 @@ from utils import (
 
 MULTIMODAL_MODELS = {"MMSConvB", "Perceiver"}
 WANDB_PROJECT = "SyntheticTraining"
+DEFAULT_MOMENTUM = 0
+DEFAULT_WEIGHT_DECAY = 0
 
 
 def normalize_bool(value):
@@ -36,17 +38,39 @@ def normalize_bool(value):
     return bool(value)
 
 
+def prepare_wandb_value(value):
+    if isinstance(value, (int, float, str, bool)) or value is None:
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): prepare_wandb_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [prepare_wandb_value(item) for item in value]
+    return str(value)
+
+
 def prepare_wandb_config(values):
-    config = {}
-    for key, value in values.items():
-        if isinstance(value, (int, float, str, bool)) or value is None:
-            config[key] = value
-        elif isinstance(value, Path):
-            config[key] = str(value)
-        elif isinstance(value, (list, tuple)):
-            if all(isinstance(item, (int, float, str, bool)) or item is None for item in value):
-                config[key] = list(value)
-    return config
+    return {str(key): prepare_wandb_value(value) for key, value in values.items()}
+
+
+def config_values_equal(left, right):
+    return prepare_wandb_value(left) == prepare_wandb_value(right)
+
+
+def add_override(overrides, key, original_value, override_value):
+    if config_values_equal(original_value, override_value):
+        return
+
+    overrides[key] = prepare_wandb_value(override_value)
+
+
+def merge_wandb_metadata(config, metadata, prefix="trace"):
+    for key, value in prepare_wandb_config(metadata).items():
+        target_key = key
+        if key in config and not config_values_equal(config[key], value):
+            target_key = "{}_{}".format(prefix, key)
+        config[target_key] = value
 
 
 def build_run_args(run_config):
@@ -228,12 +252,23 @@ def main(cli_args):
     api = wandb.Api()
     run, run_path = resolve_run(api, cli_args.run_id, entity=cli_args.entity, project=cli_args.project)
 
-    distill_args = build_run_args(run.config)
-    if cli_args.data_path is not None:
-        distill_args.data_path = cli_args.data_path
+    source_config = {str(key): value for key, value in dict(run.config).items() if not str(key).startswith("_")}
+    distill_args = build_run_args(source_config)
+    overrides = {}
 
+    if cli_args.data_path is not None:
+        add_override(overrides, "data_path", distill_args.data_path, cli_args.data_path)
+        distill_args.data_path = cli_args.data_path
+    if cli_args.dsa_strategy is not None:
+        add_override(overrides, "dsa_strategy", distill_args.dsa_strategy, cli_args.dsa_strategy)
+        distill_args.dsa_strategy = cli_args.dsa_strategy
+
+    if cli_args.device is not None:
+        add_override(overrides, "device", distill_args.device, device)
     distill_args.device = device
-    distill_args.seed = distill_args.seed if cli_args.seed is None else int(cli_args.seed)
+    if cli_args.seed is not None:
+        add_override(overrides, "seed", distill_args.seed, int(cli_args.seed))
+        distill_args.seed = int(cli_args.seed)
     fix_seed(distill_args.seed)
 
     download_root = Path(cli_args.download_dir) / run.id
@@ -242,14 +277,24 @@ def main(cli_args):
     snapshot = load_distillation_snapshot(api, run_path, run, cli_args.iteration, download_root)
     distill_iteration = snapshot["iteration"]
 
-    train_epochs = distill_args.epoch_eval_train if cli_args.train_epochs is None else int(cli_args.train_epochs)
-    train_lr = cli_args.train_lr
-    if train_lr is None:
-        train_lr = recover_synthetic_lr(run, distill_iteration, distill_args.lr_teacher)
+    if cli_args.train_epochs is None:
+        train_epochs = distill_args.epoch_eval_train
+    else:
+        train_epochs = int(cli_args.train_epochs)
+        add_override(overrides, "epoch_eval_train", distill_args.epoch_eval_train, train_epochs)
+
+    default_train_lr = recover_synthetic_lr(run, distill_iteration, distill_args.lr_teacher)
+    if cli_args.train_lr is None:
+        train_lr = default_train_lr
+    else:
+        train_lr = float(cli_args.train_lr)
+        add_override(overrides, "train_lr", default_train_lr, train_lr)
 
     distill_args.epoch_eval_train = int(train_epochs)
     distill_args.lr_net = float(train_lr)
-    distill_args.batch_train = distill_args.batch_train if cli_args.batch_train is None else int(cli_args.batch_train)
+    if cli_args.batch_train is not None:
+        add_override(overrides, "batch_train", distill_args.batch_train, int(cli_args.batch_train))
+        distill_args.batch_train = int(cli_args.batch_train)
     if distill_args.epoch_eval_train < 1:
         raise ValueError("epoch_eval_train must be at least 1.")
     if distill_args.batch_train < 1:
@@ -264,9 +309,11 @@ def main(cli_args):
     )
     distill_args.im_size = im_size
 
+    default_test_batch_size = getattr(testloader, "batch_size", None)
     if cli_args.batch_test is not None:
         if int(cli_args.batch_test) < 1:
             raise ValueError("batch_test must be at least 1.")
+        add_override(overrides, "batch_test", default_test_batch_size, int(cli_args.batch_test))
         testloader = DataLoader(dst_test, batch_size=int(cli_args.batch_test), shuffle=False, num_workers=0)
 
     multimodal = distill_args.unimodal != "model"
@@ -282,18 +329,33 @@ def main(cli_args):
 
     model = get_network(distill_args.model, channel, num_classes, im_size, dist=False, init_seed=distill_args.seed, **build_model_kwargs(distill_args),).to(device)
 
-    optimizer = torch.optim.SGD(model.parameters(), lr=float(train_lr), momentum=float(cli_args.momentum), weight_decay=float(cli_args.weight_decay))
+    source_momentum = getattr(distill_args, "momentum", DEFAULT_MOMENTUM)
+    source_weight_decay = getattr(distill_args, "weight_decay", DEFAULT_WEIGHT_DECAY)
+    if source_momentum is None:
+        source_momentum = DEFAULT_MOMENTUM
+    if source_weight_decay is None:
+        source_weight_decay = DEFAULT_WEIGHT_DECAY
+    momentum = float(source_momentum) if cli_args.momentum is None else float(cli_args.momentum)
+    weight_decay = float(source_weight_decay) if cli_args.weight_decay is None else float(cli_args.weight_decay)
+    if cli_args.momentum is not None:
+        add_override(overrides, "momentum", source_momentum, momentum)
+    if cli_args.weight_decay is not None:
+        add_override(overrides, "weight_decay", source_weight_decay, weight_decay)
+
+    optimizer = torch.optim.SGD(model.parameters(), lr=float(train_lr), momentum=momentum, weight_decay=weight_decay)
     criterion = nn.CrossEntropyLoss().to(device)
 
     snapshot_label = "best_so_far" if cli_args.iteration is None else "iter_{}".format(cli_args.iteration)
     print(f"Loaded distill run {run.name or run.id} ({run.id}) | dataset={distill_args.dataset} model={distill_args.model}")
-    print(f"Using snapshot {snapshot_label} | resolved distill iteration={distill_iteration} | eval lr={current_lr:.6f} | epochs={train_epochs}")
+    print(f"Using snapshot {snapshot_label} | resolved distill iteration={distill_iteration} | epochs={train_epochs}")
 
     best_test_acc = float("-inf")
     best_epoch = -1
 
     wandb_run_name = "{}-{}".format(run.name or run.id, snapshot_label)
-    wandb_config = prepare_wandb_config(
+    wandb_config = prepare_wandb_config(source_config)
+    merge_wandb_metadata(
+        wandb_config,
         {
             "source_run_id": run.id,
             "source_run_name": run.name,
@@ -301,21 +363,16 @@ def main(cli_args):
             "source_project": cli_args.project,
             "requested_iteration": cli_args.iteration,
             "resolved_iteration": distill_iteration,
-            "dataset": distill_args.dataset,
-            "subset": distill_args.subset,
-            "model": distill_args.model,
-            "batch_train": distill_args.batch_train,
             "batch_test": test_batch_size,
             "train_epochs": int(train_epochs),
             "train_lr": float(train_lr),
-            "momentum": float(cli_args.momentum),
-            "weight_decay": float(cli_args.weight_decay),
-            "seed": int(distill_args.seed),
-            "device": device,
-            "data_path": distill_args.data_path,
+            "momentum": momentum,
+            "weight_decay": weight_decay,
+            "runtime_device": device,
             "download_dir": download_root,
         }
     )
+    wandb_config["overrides"] = prepare_wandb_value(overrides)
 
     wandb_kwargs = {
         "config": wandb_config,
@@ -336,9 +393,7 @@ def main(cli_args):
             train_acc_value = float(train_acc)
             test_loss_value = float(test_loss)
             test_acc_value = float(test_acc)
-            current_lr = float(optimizer.param_groups[0]["lr"])
             metric_payload = {
-                "lr": current_lr,
                 "test_acc": test_acc_value,
                 "test_loss": test_loss_value,
                 "train_acc": train_acc_value,
@@ -367,14 +422,14 @@ if __name__ == "__main__":
     parser.add_argument("--epoch_eval_train", "--train_epochs", dest="train_epochs", type=int,default=None, help="Override the number of evaluation-training epochs. Defaults to epoch_eval_train from the distill run.",)
     parser.add_argument("--lr", "--train_lr", dest="train_lr", type=float, default=None, help="Override the evaluation learning rate. Defaults to Synthetic_LR at the selected iteration.")
     parser.add_argument("--batch_train", type=int, default=None, help="Override the synthetic training batch size. Defaults to batch_train from the distill run.")
-    parser.add_argument("--batch_test", type=int, default=None, help="Override the real test batch size. Defaults to 128.")
+    parser.add_argument("--batch_test", type=int, default=None, help="Override the real test batch size. Defaults to the testloader batch size from the distill run.")
     parser.add_argument("--data_path", type=str, default=None, help="Override the dataset path stored in the distill run config.")
-    parser.add_argument("--seed", type=int, default=42, help="Override the seed from the distill run config.")
+    parser.add_argument("--seed", type=int, default=None, help="Override the seed from the distill run config.")
     parser.add_argument("--device", type=str, default=None, choices=["cpu", "cuda"], help="Device to use. Defaults to cuda when available.")
-    parser.add_argument("--momentum", type=float, default=0.9, help="Momentum for the evaluation SGD optimizer.")
-    parser.add_argument("--weight_decay", type=float, default=5e-4, help="Weight decay for the evaluation SGD optimizer.")
+    parser.add_argument("--momentum", type=float, default=None, help="Momentum for the evaluation SGD optimizer.")
+    parser.add_argument("--weight_decay", type=float, default=None, help="Weight decay for the evaluation SGD optimizer.")
     parser.add_argument("--download_dir", type=str, default="./logged_files/traces",help="Directory used to download the selected W&B artifact.")
-    parser.add_argument('--dsa_strategy', type=str, default='color_crop_cutout_flip_scale_rotate', help='differentiable Siamese augmentation strategy')
+    parser.add_argument('--dsa_strategy', type=str, default=None, help='Override the differentiable Siamese augmentation strategy from the distill run config.')
 
     args = parser.parse_args()
     main(args)
