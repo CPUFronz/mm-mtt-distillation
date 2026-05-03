@@ -284,8 +284,6 @@ def main(cli_args):
 
     optimizer = torch.optim.SGD(model.parameters(), lr=float(train_lr), momentum=float(cli_args.momentum), weight_decay=float(cli_args.weight_decay))
     criterion = nn.CrossEntropyLoss().to(device)
-    lr_schedule = {int(train_epochs) // 2 + 1}
-    current_lr = float(train_lr)
 
     snapshot_label = "best_so_far" if cli_args.iteration is None else "iter_{}".format(cli_args.iteration)
     print(f"Loaded distill run {run.name or run.id} ({run.id}) | dataset={distill_args.dataset} model={distill_args.model}")
@@ -353,10 +351,6 @@ def main(cli_args):
                 best_epoch = ep
 
             print(f"Epoch {ep:04d}/{int(train_epochs):04d} | train loss = {train_loss_value:.6f} acc = {train_acc_value:.4f} | test loss = {test_loss_value:.6f} acc = {test_acc_value:.4f}")
-
-            if ep in lr_schedule and ep < int(train_epochs):
-                current_lr *= 0.1
-                optimizer = torch.optim.SGD(model.parameters(), lr=current_lr, momentum=float(cli_args.momentum), weight_decay=float(cli_args.weight_decay))
 
         wandb_run.summary["best_test_acc"] = float(best_test_acc)
         wandb_run.summary["best_epoch"] = int(best_epoch)
