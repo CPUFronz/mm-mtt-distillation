@@ -570,16 +570,6 @@ def main(args):
         if it%10 == 0:
             print('iter = %04d, loss = %.4f' % (it, grand_loss.item()))
 
-            # TODO: Shadi's code, eventually remove:
-            # ── IMAGE_SYN STATISTICS CHECK ────────────────────
-            print(f"  img_mean={image_syn.mean().item():.4f} | "
-                  f"img_std={image_syn.std().item():.4f} | "
-                  f"img_min={image_syn.min().item():.4f} | "
-                  f"img_max={image_syn.max().item():.4f} | "
-                  f"grad_norm={image_syn.grad.norm().item():.4f} | "
-                  f"syn_lr={syn_lr.item():.6f}")
-            # ─────────────────────────────────────────────────
-
     wandb.finish()
 
 
