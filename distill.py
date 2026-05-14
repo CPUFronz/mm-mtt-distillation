@@ -350,10 +350,11 @@ def main(args):
                     best_std[model_eval] = acc_test_std
                     save_this_it = True
                 print('Evaluate %d random %s, mean = %.4f std = %.4f\n-------------------------'%(len(accs_test), model_eval, acc_test_mean, acc_test_std))
-                wandb.log({'Accuracy/{}'.format(model_eval): acc_test_mean}, step=it)
-                wandb.log({'Max_Accuracy/{}'.format(model_eval): best_acc[model_eval]}, step=it)
-                wandb.log({'Std/{}'.format(model_eval): acc_test_std}, step=it)
-                wandb.log({'Max_Std/{}'.format(model_eval): best_std[model_eval]}, step=it)
+                
+                wandb.log({'Accuracy': acc_test_mean}, step=it)
+                wandb.log({'Max_Accuracy': best_acc[model_eval]}, step=it)
+                wandb.log({'Std': acc_test_std}, step=it)
+                wandb.log({'Max_Std': best_std[model_eval]}, step=it)
 
 
         if it in eval_it_pool and (save_this_it or it % 1000 == 0):
