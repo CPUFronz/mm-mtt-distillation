@@ -790,6 +790,25 @@ class MultimodalPerceiver(nn.Module):
 
 
 class Widar_CNN3D(nn.Module):
+    def __init__(self, num_classes=6, dropout=0.3):
+        super().__init__()
+        self.conv1   = nn.Conv3d(1,   64,  kernel_size=3, padding=1)
+        self.conv2   = nn.Conv3d(64,  128, kernel_size=3, padding=1)
+        self.conv3   = nn.Conv3d(128, 256, kernel_size=3, padding=1)
+        self.pool    = nn.MaxPool3d(2)
+        self.drop    = nn.Dropout(dropout)
+        self.fc1     = nn.Linear(256 * 2 * 2 * 2, 512)
+        self.fc2     = nn.Linear(512, num_classes)
+
+    def forward(self, x):
+        x = x.unsqueeze(1)
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = self.pool(F.relu(self.conv3(x)))
+        x = x.view(x.size(0), -1)
+        x = self.drop(F.relu(self.fc1(x)))
+        return self.fc2(x)
+    """
     def __init__(self, num_classes=6):
         super().__init__()
         self.conv1 = nn.Conv3d(1,   64,  kernel_size=3, padding=1)
@@ -808,6 +827,7 @@ class Widar_CNN3D(nn.Module):
         x = x.view(x.size(0), -1)                  # (B, 2048)
         x = F.relu(self.fc1(x))                     # (B, 512)  ← features here
         return self.fc2(x)                           # (B, num_classes)
+    """
 
     def get_features(self, x):
         """Returns 512-dim penultimate layer features — used for selection."""
