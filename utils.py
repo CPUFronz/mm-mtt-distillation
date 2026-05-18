@@ -2,6 +2,7 @@
 # https://github.com/VICO-UoE/DatasetCondensation
 
 import time
+import argparse
 import numpy as np
 import torch
 import torch.nn as nn
@@ -11,8 +12,8 @@ import kornia as K
 import tqdm
 from torch.utils.data import Dataset
 from torchvision import datasets, transforms
-from scipy.ndimage.interpolation import rotate as scipyrotate
 from networks import MLP, ConvNet, LeNet, AlexNet, VGG11BN, VGG11, ResNet18, ResNet18BN_AP, ResNet18_AP, Widar_CNN3D
+
 
 class Config:
     imagenette = [0, 217, 482, 491, 497, 566, 569, 571, 574, 701]
@@ -538,6 +539,9 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
 #####################################################################
 # modified by Franz
 #####################################################################
+
+# TODO: diese Funktion in trace.py verwenden und erweitern, damit nach jeder Epoche zu wandb geloggt wird.
+
 def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, return_loss=False, texture=False, sensor_train=None):
     net = net.to(args.device)
     images_train = images_train.to(args.device)
@@ -545,11 +549,13 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
     lr = float(args.lr_net)
     Epoch = int(args.epoch_eval_train)
     lr_schedule = [Epoch//2+1]
-    optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
+    if args.optimizer == "SGD":
+        optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
+    elif args.optimizer == "Adam":
+        optimizer = torch.optim.Adam(net.parameters(), lr=lr, weight_decay=0.0005)
 
     criterion = nn.CrossEntropyLoss().to(args.device)
 
-    
     if sensor_train is None:
         dst_train = TensorDataset(images_train, labels_train)
     else:
@@ -606,6 +612,8 @@ def get_eval_pool(eval_mode, model, model_eval):
         model_eval_pool = [model_eval]
     return model_eval_pool
 
+# TODO: add old Augmentations for Images
+
 #####################################################################
 # added by Shadi and Franz
 #####################################################################
@@ -629,7 +637,7 @@ ParamDiffAug = {  # shadi version 21 April
 }
 
 
-def DiffAugment(x, strategy='', seed=-1, param=None):
+def DiffAugment(x, strategy='', seed=-1, param=None, aug_chance=0.5):
     """
     Differentiable augmentation for BVP data.
 
@@ -639,6 +647,7 @@ def DiffAugment(x, strategy='', seed=-1, param=None):
                    Use '|' NOT '_' as separator (aug names contain underscores).
         seed     : -1 for sample-wise random, else batch-wise random
         param    : ParamDiffAug dict
+        aug_chance : Probability of applying each augmentation
 
     Returns:
         Augmented tensor [B, T, H, W]
@@ -660,10 +669,11 @@ def DiffAugment(x, strategy='', seed=-1, param=None):
                 for f in AUGMENT_FNS[p]:
                     x = f(x, param)
     elif param['aug_mode'] == 'S':  # pick one aug randomly
-        p = augs[torch.randint(0, len(augs), size=(1,)).item()]
-        if p in AUGMENT_FNS:
-            for f in AUGMENT_FNS[p]:
-                x = f(x, param)
+        if random.random() < aug_chance:
+            p = augs[torch.randint(0, len(augs), size=(1,)).item()]
+            if p in AUGMENT_FNS:
+                for f in AUGMENT_FNS[p]:
+                    x = f(x, param)
 
     return x.contiguous()
 
@@ -933,6 +943,66 @@ def fix_seed(seed):
         pass
     os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":16:8")
     os.environ.setdefault("PYTHONHASHSEED", f"{seed}")
+
+
+def parse_args(mode):
+    if mode not in ("buffer", "distill"):
+        raise ValueError("mode must be either 'buffer' or 'distill'")
+
+    parser = argparse.ArgumentParser(description='Parameter Processing')
+    parser.add_argument('--dataset', type=str, default='CIFAR10', help='dataset')
+    parser.add_argument('--subset', type=str, default='imagenette', help='subset' if mode == 'buffer' else 'ImageNet subset. This only does anything when --dataset=ImageNet')
+    parser.add_argument('--model', type=str, default='ConvNet', help='model')
+    parser.add_argument('--res', type=int, default=128, help='resolution for imagenet')
+    parser.add_argument('--lr_teacher', type=float, default=0.01, help='learning rate for updating network parameters' if mode == 'buffer' else 'initialization for synthetic learning rate')
+    parser.add_argument('--batch_train', type=int, default=256, help='batch size for training networks')
+    parser.add_argument('--batch_real', type=int, default=256, help='batch size for real loader' if mode == 'buffer' else 'batch size for real data')
+    parser.add_argument('--dsa', type=str, default='True', choices=['True', 'False'], help='whether to use differentiable Siamese augmentation.')
+    parser.add_argument('--dsa_strategy', type=str, default='color_crop_cutout_flip_scale_rotate', help='differentiable Siamese augmentation strategy')
+    parser.add_argument('--data_path', type=str, default='data', help='dataset path')
+    parser.add_argument('--buffer_path', type=str, default='./buffers', help='buffer path')
+    parser.add_argument('--zca', action='store_true', help="do ZCA whitening")
+    parser.add_argument('--seed', type=int, default=42, help='set random seed')
+    parser.add_argument('--unimodal', type=str, default='', choices=['', 'image', 'sensor'], help='unimodal training (only for multimodal datasets)')
+    parser.add_argument('--n_groups', type=int, default=8, help='group norm groups (for MMSConvB)')
+    parser.add_argument('--name', type=str, default='Run', help='name of wandb run')
+    parser.add_argument('--optimizer', type=str, default='SGD', choices=["SGD", "Adam"], help='Optimizer to use for evaluation training. Overrides the optimizer choice from the distill run config if specified.')
+    parser.add_argument('--aug_chance', type=float, default=0.5, help='Override the augmentation chance for evaluation training. Defaults to 0.5 if DSA is enabled and no value is specified.')
+
+    if mode == "buffer":
+        parser.add_argument('--num_experts', type=int, default=100, help='training iterations')
+        parser.add_argument('--train_epochs', type=int, default=50)
+        parser.add_argument('--decay', action='store_true')
+        parser.add_argument('--mom', type=float, default=0, help='momentum')
+        parser.add_argument('--l2', type=float, default=0, help='l2 regularization')
+        parser.add_argument('--save_interval', type=int, default=10)
+        parser.add_argument('--optuna_trials', type=int, default=0, help='number of optuna trials to run (0 disables search)')
+    else:
+        parser.add_argument('--ipc', type=int, default=1, help='image(s) per class')
+        parser.add_argument('--eval_mode', type=str, default='S', help='eval_mode, check utils.py for more info')
+        parser.add_argument('--num_eval', type=int, default=5, help='how many networks to evaluate on')
+        parser.add_argument('--eval_it', type=int, default=100, help='how often to evaluate')
+        parser.add_argument('--epoch_eval_train', type=int, default=1000, help='epochs to train a model with synthetic data')
+        parser.add_argument('--Iteration', type=int, default=5000, help='how many distillation steps to perform')
+        parser.add_argument('--lr_img', type=float, default=1000, help='learning rate for updating synthetic images')
+        parser.add_argument('--lr_lr', type=float, default=1e-05, help='learning rate for updating... learning rate')
+        parser.add_argument('--lr_init', type=float, default=0.01, help='how to init lr (alpha)')
+        parser.add_argument('--batch_syn', type=int, default=None, help='should only use this if you run out of VRAM')
+        parser.add_argument('--data_init', type=str, default='real', choices=["noise", "real"], help='noise/real: initialize synthetic images from random noise or randomly sampled real images.')
+        parser.add_argument('--expert_epochs', type=int, default=3, help='how many expert epochs the target params are')
+        parser.add_argument('--syn_steps', type=int, default=20, help='how many steps to take on synthetic data')
+        parser.add_argument('--max_start_epoch', type=int, default=25, help='max epoch we can start at')
+        parser.add_argument('--load_all', action='store_true', help='only use if you can fit all expert trajectories into RAM')
+        parser.add_argument('--no_aug', type=bool, default=False, help='this turns off diff aug during distillation')
+        parser.add_argument('--texture', action='store_true', help='will distill textures instead')
+        parser.add_argument('--canvas_size', type=int, default=2, help='size of synthetic canvas')
+        parser.add_argument('--canvas_samples', type=int, default=1, help='number of canvas samples per iteration')
+        parser.add_argument('--max_files', type=int, default=None, help='number of expert files to read (leave as None unless doing ablations)')
+        parser.add_argument('--max_experts', type=int, default=None, help='number of experts to read per file (leave as None unless doing ablations)')
+        parser.add_argument('--force_save', action='store_true', help='this will save images for 50ipc')
+        parser.add_argument('--min_start_epoch', type=int, default=0, help='min epoch we can start at')
+
+    return parser.parse_args()
 
 
 class MultimodalTensorDataset(Dataset):

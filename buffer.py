@@ -1,10 +1,9 @@
 import os
-import argparse
 import torch
 import torch.nn as nn
 from tqdm import tqdm
 from utils import get_dataset, get_network, get_daparam,\
-    TensorDataset, epoch, ParamDiffAug
+    TensorDataset, epoch, ParamDiffAug, parse_args
 import copy
 
 
@@ -174,38 +173,7 @@ def main(args, trial=None):
     return best_acc
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Parameter Processing')
-    parser.add_argument('--dataset', type=str, default='CIFAR10', help='dataset')
-    parser.add_argument('--subset', type=str, default='imagenette', help='subset')
-    parser.add_argument('--model', type=str, default='ConvNet', help='model')
-    parser.add_argument('--res', type=int, default=128, help='resolution for imagenet')
-    parser.add_argument('--num_experts', type=int, default=100, help='training iterations')
-    parser.add_argument('--lr_teacher', type=float, default=0.01, help='learning rate for updating network parameters')
-    parser.add_argument('--batch_train', type=int, default=256, help='batch size for training networks')
-    parser.add_argument('--batch_real', type=int, default=256, help='batch size for real loader')
-    parser.add_argument('--dsa', type=str, default='True', choices=['True', 'False'],
-                        help='whether to use differentiable Siamese augmentation.')
-    parser.add_argument('--dsa_strategy', type=str, default='color_crop_cutout_flip_scale_rotate',
-                        help='differentiable Siamese augmentation strategy')
-    parser.add_argument('--data_path', type=str, default='data', help='dataset path')
-    parser.add_argument('--buffer_path', type=str, default='./buffers', help='buffer path')
-    parser.add_argument('--train_epochs', type=int, default=50)
-    parser.add_argument('--zca', action='store_true')
-    parser.add_argument('--decay', action='store_true')
-    parser.add_argument('--mom', type=float, default=0, help='momentum')
-    parser.add_argument('--l2', type=float, default=0, help='l2 regularization')
-    parser.add_argument('--save_interval', type=int, default=10)
-
-    #####################################################################
-    # added by Franz
-    #####################################################################
-    parser.add_argument('--seed', type=int, default=1337, help='set random seed')
-    parser.add_argument('--unimodal', type=str, default='', choices=['', 'image', 'sensor'], help='unimodal training (only for multimodal datasets)')
-    parser.add_argument('--n_groups', type=int, default=8, help='group norm groups (for MMSConvB)')
-    parser.add_argument('--optuna_trials', type=int, default=0, help='number of optuna trials to run (0 disables search)')
-    parser.add_argument('--name', type=str, default='TrainingRun', help='name of wandb run')
-
-    args = parser.parse_args()
+    args = parse_args('buffer')
 
     if args.model not in ['MMSConvB', 'Perceiver']:
         args.unimodal = 'model'  # used by multimodal datasets, to only provide images for unimodal models
