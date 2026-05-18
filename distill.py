@@ -345,10 +345,10 @@ def main(args):
                     save_this_it = True
                 print('Evaluate %d random %s, mean = %.4f std = %.4f\n-------------------------'%(len(accs_test), model_eval, acc_test_mean, acc_test_std))
                 
-                wandb.log({'Accuracy': acc_test_mean}, step=it)
-                wandb.log({'Max_Accuracy': best_acc[model_eval]}, step=it)
-                wandb.log({'Std': acc_test_std}, step=it)
-                wandb.log({'Max_Std': best_std[model_eval]}, step=it)
+                wandb.log({'Accuracy/': acc_test_mean}, step=it)
+                wandb.log({'Max_Accuracy/': best_acc[model_eval]}, step=it)
+                wandb.log({'Std/': acc_test_std}, step=it)
+                wandb.log({'Max_Std/': best_std[model_eval]}, step=it)
 
 
         if it in eval_it_pool and (save_this_it or it % 1000 == 0):
@@ -569,6 +569,8 @@ def main(args):
 
 
 if __name__ == '__main__':
+
+# TODO: write a parse function for distill.py buffer.py and trace.py
     parser = argparse.ArgumentParser(description='Parameter Processing')
 
     parser.add_argument('--dataset', type=str, default='CIFAR10', help='dataset')
@@ -643,6 +645,8 @@ if __name__ == '__main__':
     parser.add_argument('--n_groups', type=int, default=8, help='group norm groups (for MMSConvB)')
     parser.add_argument('--name', type=str, default='', help='name for wandb run')
     parser.add_argument('--min_start_epoch', type=int, default=0, help='min epoch we can start at')
+    parser.add_argument('--optimizer', type=str, default='SGD', choices=["SGD", "Adam"], help='Optimizer to use for evaluation training. Overrides the optimizer choice from the distill run config if specified.')
+    parser.add_argument('--aug_chance', type=float, default=0.5, help='Override the augmentation chance for evaluation training. Defaults to 0.5 if DSA is enabled and no value is specified.')
     
     #####################################################################
 
