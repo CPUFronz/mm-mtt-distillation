@@ -126,7 +126,6 @@ def build_run_args(run_config):
     args.seed = int(getattr(args, "seed", 42))
     args.res = int(getattr(args, "res", 128))
     args.dsa_param = ParamDiffAug.copy()
-    args.dc_aug_param = None if args.dsa else get_daparam(args.dataset, args.model, args.model, getattr(args, "ipc", None))
     args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
     if args.model not in MULTIMODAL_MODELS:

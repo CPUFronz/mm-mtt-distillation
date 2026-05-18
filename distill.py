@@ -52,10 +52,6 @@ def main(args):
 
     data_save = []
 
-    if args.dsa:
-        # args.epoch_eval_train = 1000
-        args.dc_aug_param = None
-
     args.dsa_param = ParamDiffAug.copy()
 
     dsa_params = args.dsa_param
@@ -311,8 +307,6 @@ def main(args):
                 if args.dsa:
                     print('DSA augmentation strategy: \n', args.dsa_strategy)
                     print('DSA augmentation parameters: \n', args.dsa_param)
-                else:
-                    print('DC augmentation parameters: \n', args.dc_aug_param)
 
                 accs_test = []
                 accs_train = []

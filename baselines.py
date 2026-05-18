@@ -8,7 +8,6 @@ from utils import (
     get_eval_pool,
     evaluate_synset,
     ParamDiffAug,
-    get_daparam,
     fix_seed,
 )
 
@@ -90,10 +89,6 @@ def main(args):
 
     args.im_size = im_size
     args.dsa_param = ParamDiffAug.copy()
-    if args.dsa:
-        args.dc_aug_param = None
-    else:
-        args.dc_aug_param = get_daparam(args.dataset, args.model, args.model, args.ipc)
 
     model_eval_pool = get_eval_pool(args.eval_mode, args.model, args.model)
 

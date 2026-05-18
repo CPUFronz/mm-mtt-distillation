@@ -82,11 +82,6 @@ def main(args, trial=None):
     trainloader = torch.utils.data.DataLoader(dst_train, batch_size=args.batch_train, shuffle=True, num_workers=0)
     #######################################################################
 
-    ''' set augmentation for whole-dataset training '''
-    args.dc_aug_param = get_daparam(args.dataset, args.model, args.model, None)
-    args.dc_aug_param['strategy'] = 'crop_scale_rotate'  # for whole-dataset training
-    print('DC augmentation parameters: \n', args.dc_aug_param)
-
     best_acc = 0.0
 
     for it in range(0, args.num_experts):
