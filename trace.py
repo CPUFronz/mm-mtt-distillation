@@ -28,6 +28,10 @@ MULTIMODAL_MODELS = {"MMSConvB", "Perceiver"}
 WANDB_PROJECT = "SyntheticTraining"
 DEFAULT_MOMENTUM = 0
 DEFAULT_WEIGHT_DECAY = 0
+TRACE_LR_SCHEDULE = (
+    {"until_epoch": 500, "lr": 0.010074},
+    {"until_epoch": 1000, "lr": 0.010074 / 10},
+)
 
 
 def normalize_bool(value):
@@ -71,6 +75,15 @@ def merge_wandb_metadata(config, metadata, prefix="trace"):
         if key in config and not config_values_equal(config[key], value):
             target_key = "{}_{}".format(prefix, key)
         config[target_key] = value
+
+
+def trace_lr_for_epoch(epoch):
+    for schedule_step in TRACE_LR_SCHEDULE:
+        until_epoch = schedule_step["until_epoch"]
+        if until_epoch is None or epoch <= until_epoch:
+            return float(schedule_step["lr"])
+
+    raise ValueError("No learning rate configured for epoch {}".format(epoch))
 
 
 def build_run_args(run_config):
@@ -291,6 +304,10 @@ def main(cli_args):
         add_override(overrides, "train_lr", default_train_lr, train_lr)
 
     distill_args.epoch_eval_train = int(train_epochs)
+    schedule_initial_lr = trace_lr_for_epoch(1)
+    if not config_values_equal(train_lr, schedule_initial_lr):
+        add_override(overrides, "train_lr", train_lr, schedule_initial_lr)
+    train_lr = schedule_initial_lr
     distill_args.lr_net = float(train_lr)
     if cli_args.batch_train is not None:
         add_override(overrides, "batch_train", distill_args.batch_train, int(cli_args.batch_train))
@@ -308,6 +325,12 @@ def main(cli_args):
         args=distill_args,
     )
     distill_args.im_size = im_size
+
+# TODO: einbauen!
+#    print('*' * 80)
+#    print('Limited test to 10%')
+#    dst_test.data = dst_test.data[: len(dst_test) // 10]
+#    print('*' * 80)
 
     default_test_batch_size = getattr(testloader, "batch_size", None)
     if cli_args.batch_test is not None:
@@ -343,6 +366,7 @@ def main(cli_args):
         add_override(overrides, "weight_decay", source_weight_decay, weight_decay)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=float(train_lr), momentum=momentum, weight_decay=weight_decay)
+#    optimizer = torch.optim.Adam(model.parameters(), lr=float(train_lr), weight_decay=0.0005)
     criterion = nn.CrossEntropyLoss().to(device)
 
     snapshot_label = "best_so_far" if cli_args.iteration is None else "iter_{}".format(cli_args.iteration)
@@ -366,6 +390,8 @@ def main(cli_args):
             "batch_test": test_batch_size,
             "train_epochs": int(train_epochs),
             "train_lr": float(train_lr),
+            "lr_scheduler": "fixed_step",
+            "lr_schedule": TRACE_LR_SCHEDULE,
             "momentum": momentum,
             "weight_decay": weight_decay,
             "runtime_device": device,
@@ -384,6 +410,10 @@ def main(cli_args):
 
     with wandb.init(**wandb_kwargs) as wandb_run:
         for ep in range(1, int(train_epochs) + 1):
+            current_lr = trace_lr_for_epoch(ep)
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = current_lr
+
             train_loss, train_acc = epoch("train", trainloader, model, optimizer, criterion, distill_args, aug=True, texture=distill_args.texture)
 
             with torch.no_grad():
@@ -398,6 +428,7 @@ def main(cli_args):
                 "test_loss": test_loss_value,
                 "train_acc": train_acc_value,
                 "train_loss": train_loss_value,
+                "lr": current_lr,
             }
             wandb.log(metric_payload, step=ep)
 
@@ -405,7 +436,7 @@ def main(cli_args):
                 best_test_acc = test_acc_value
                 best_epoch = ep
 
-            print(f"Epoch {ep:04d}/{int(train_epochs):04d} | train loss = {train_loss_value:.6f} acc = {train_acc_value:.4f} | test loss = {test_loss_value:.6f} acc = {test_acc_value:.4f}")
+            print(f"Epoch {ep:04d}/{int(train_epochs):04d} | lr = {current_lr:.8f} | train loss = {train_loss_value:.6f} acc = {train_acc_value:.4f} | test loss = {test_loss_value:.6f} acc = {test_acc_value:.4f}")
 
         wandb_run.summary["best_test_acc"] = float(best_test_acc)
         wandb_run.summary["best_epoch"] = int(best_epoch)
@@ -430,6 +461,8 @@ if __name__ == "__main__":
     parser.add_argument("--weight_decay", type=float, default=None, help="Weight decay for the evaluation SGD optimizer.")
     parser.add_argument("--download_dir", type=str, default="./logged_files/traces",help="Directory used to download the selected W&B artifact.")
     parser.add_argument('--dsa_strategy', type=str, default=None, help='Override the differentiable Siamese augmentation strategy from the distill run config.')
+    parser.add_argument('--optimizer', type=str, default=None, choices=["SGD", "Adam"], help='Optimizer to use for evaluation training. Overrides the optimizer choice from the distill run config if specified.')
+    parser.add_argument('--aug_chance', type=float, default=0.5, help='Override the augmentation chance for evaluation training. Defaults to 0.5 if DSA is enabled and no value is specified.')
 
     args = parser.parse_args()
     main(args)
