@@ -12,6 +12,7 @@ import kornia as K
 import tqdm
 from torch.utils.data import Dataset
 from torchvision import datasets, transforms
+import wandb
 from networks import MLP, ConvNet, LeNet, AlexNet, VGG11BN, VGG11, ResNet18, ResNet18BN_AP, ResNet18_AP, Widar_CNN3D
 
 
@@ -570,9 +571,24 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
         loss_train, acc_train = epoch('train', trainloader, net, optimizer, criterion, args, aug=True, texture=texture)
         acc_train_list.append(acc_train)
         loss_train_list.append(loss_train)
-        if ep == Epoch:
+        if ep == Epoch or training_logs:
             with torch.no_grad():
                 loss_test, acc_test = epoch('test', testloader, net, optimizer, criterion, args, aug=False)
+
+            if training_logs:
+                for param_group in optimizer.param_groups:
+                    current_lr = param_group["lr"]
+                    break
+
+                metric_payload = {
+                    "test_acc": acc_test,
+                    "test_loss": loss_test,
+                    "train_acc": acc_train,
+                    "train_loss": loss_train,
+                    "lr": current_lr,
+                }
+                wandb.log(metric_payload, step=ep)
+
         if ep in lr_schedule:
             lr *= 0.1
             optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
