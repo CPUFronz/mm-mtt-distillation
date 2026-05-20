@@ -310,6 +310,8 @@ def main(args):
                 accs_test = []
                 accs_train = []
                 for it_eval in range(args.num_eval):
+                    fix_seed(args.seed + it_eval) # added by Franz
+
                     net_eval = get_network(model_eval, channel, num_classes, im_size, **kwargs).to(args.device) # get a random model
 
                     eval_labs = label_syn
