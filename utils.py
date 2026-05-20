@@ -1005,7 +1005,6 @@ def parse_args(mode):
         parser.add_argument('--Iteration', type=int, default=5000, help='how many distillation steps to perform')
         parser.add_argument('--lr_img', type=float, default=1000, help='learning rate for updating synthetic images')
         parser.add_argument('--lr_lr', type=float, default=1e-05, help='learning rate for updating... learning rate')
-        parser.add_argument('--lr_init', type=float, default=0.01, help='how to init lr (alpha)')
         parser.add_argument('--batch_syn', type=int, default=None, help='should only use this if you run out of VRAM')
         parser.add_argument('--data_init', type=str, default='real', choices=["noise", "real"], help='noise/real: initialize synthetic images from random noise or randomly sampled real images.')
         parser.add_argument('--expert_epochs', type=int, default=3, help='how many expert epochs the target params are')
