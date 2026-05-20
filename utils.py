@@ -543,7 +543,8 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
 
 # TODO: diese Funktion in trace.py verwenden und erweitern, damit nach jeder Epoche zu wandb geloggt wird.
 
-def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, return_loss=False, texture=False, sensor_train=None):
+def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, return_loss=False, texture=False, sensor_train=None, training_logs=False):
+    
     net = net.to(args.device)
     images_train = images_train.to(args.device)
     labels_train = labels_train.to(args.device)
@@ -591,7 +592,8 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
 
         if ep in lr_schedule:
             lr *= 0.1
-            optimizer = torch.optim.SGD(net.parameters(), lr=lr, momentum=0.9, weight_decay=0.0005)
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = lr
 
 
     time_train = time.time() - start
