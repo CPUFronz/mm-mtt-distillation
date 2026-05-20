@@ -510,8 +510,8 @@ def main(args):
                 x = torch.cat([torch.stack([torch.roll(im, (torch.randint(im_size[0]*args.canvas_size, (1,)), torch.randint(im_size[1]*args.canvas_size, (1,))), (1,2))[:,:im_size[0],:im_size[1]] for im in x]) for _ in range(args.canvas_samples)])
                 this_y = torch.cat([this_y for _ in range(args.canvas_samples)])
 
-            if args.dsa and (not args.no_aug):
-                x = DiffAugment(x, args.dsa_strategy, param=args.dsa_param)
+            if args.dsa and args.aug_chance > 0:
+                x = DiffAugment(x, args.dsa_strategy, param=args.dsa_param, aug_chance=args.aug_chance)
 
             if args.unimodal != 'model': # added by Franz
                 x = (x, syn_sensor[these_indices])

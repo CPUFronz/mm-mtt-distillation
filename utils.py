@@ -1011,7 +1011,6 @@ def parse_args(mode):
         parser.add_argument('--syn_steps', type=int, default=20, help='how many steps to take on synthetic data')
         parser.add_argument('--max_start_epoch', type=int, default=25, help='max epoch we can start at')
         parser.add_argument('--load_all', action='store_true', help='only use if you can fit all expert trajectories into RAM')
-        parser.add_argument('--no_aug', type=bool, default=False, help='this turns off diff aug during distillation')
         parser.add_argument('--texture', action='store_true', help='will distill textures instead')
         parser.add_argument('--canvas_size', type=int, default=2, help='size of synthetic canvas')
         parser.add_argument('--canvas_samples', type=int, default=1, help='number of canvas samples per iteration')
