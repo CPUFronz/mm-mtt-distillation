@@ -45,8 +45,9 @@ class Config:
 
 config = Config()
 
-def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None):
 
+# TODO: fix seeds when creating test dataloaders?
+def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None):
     class_map = None
     loader_train_dict = None
     class_map_inv = None
