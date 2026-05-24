@@ -74,9 +74,6 @@ def select_random_subset(dst_train, indices_class, ipc, args):
 
 
 def main(args):
-    if args.zca and args.texture:
-        raise AssertionError("Cannot use zca and texture together")
-
     if args.model not in MULTIMODAL_MODELS:
         args.unimodal = 'model'
 
@@ -111,7 +108,7 @@ def main(args):
         accs_train = []
         for it_eval in range(args.num_eval):
             net_eval = get_network(model_eval, channel, num_classes, im_size, **kwargs).to(args.device)
-            _, acc_train_list, acc_test = evaluate_synset(it_eval, net_eval, images_train, labels_train, testloader, args, texture=args.texture, sensor_train=sensor_train,)
+            _, acc_train_list, acc_test = evaluate_synset(it_eval, net_eval, images_train, labels_train, testloader, args, sensor_train=sensor_train,)
             accs_test.append(acc_test)
             accs_train.append(acc_train_list[-1] if acc_train_list else 0.0)
 
@@ -156,10 +153,6 @@ if __name__ == '__main__':
     parser.add_argument('--data_path', type=str, default='data', help='dataset path')
 
     parser.add_argument('--zca', action='store_true', help='do ZCA whitening')
-
-    parser.add_argument('--texture', action='store_true', help='train on textures instead')
-    parser.add_argument('--canvas_size', type=int, default=2, help='size of synthetic canvas')
-    parser.add_argument('--canvas_samples', type=int, default=1, help='number of canvas samples per iteration')
 
     parser.add_argument('--seed', type=int, default=42, help='set random seed')
     parser.add_argument('--unimodal', type=str, default='', choices=['', 'image', 'sensor'],

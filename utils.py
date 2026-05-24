@@ -501,10 +501,6 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
             sen = sen.float().to(args.device)
             lab = datum[1].long().to(args.device)
 
-        if mode == "train" and texture:
-            img = torch.cat([torch.stack([torch.roll(im, (torch.randint(args.im_size[0]*args.canvas_size, (1,)), torch.randint(args.im_size[0]*args.canvas_size, (1,))), (1,2))[:,:args.im_size[0],:args.im_size[1]] for im in img]) for _ in range(args.canvas_samples)])
-            lab = torch.cat([lab for _ in range(args.canvas_samples)])
-
         if aug:
             if args.dsa:
                 img = DiffAugment(img, args.dsa_strategy, param=args.dsa_param, aug_chance=args.aug_chance)
@@ -541,11 +537,7 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False)
 #####################################################################
 # modified by Franz
 #####################################################################
-
-# TODO: diese Funktion in trace.py verwenden und erweitern, damit nach jeder Epoche zu wandb geloggt wird.
-
-def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, return_loss=False, texture=False, sensor_train=None, training_logs=False):
-    
+def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, return_loss=False, sensor_train=None, training_logs=False):
     net = net.to(args.device)
     images_train = images_train.to(args.device)
     labels_train = labels_train.to(args.device)
@@ -570,7 +562,7 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
     loss_train_list = []
 
     for ep in tqdm.tqdm(range(Epoch+1)):
-        loss_train, acc_train = epoch('train', trainloader, net, optimizer, criterion, args, aug=True, texture=texture)
+        loss_train, acc_train = epoch('train', trainloader, net, optimizer, criterion, args, aug=True)
         acc_train_list.append(acc_train)
         loss_train_list.append(loss_train)
         if ep == Epoch or training_logs:
@@ -1011,9 +1003,6 @@ def parse_args(mode):
         parser.add_argument('--syn_steps', type=int, default=20, help='how many steps to take on synthetic data')
         parser.add_argument('--max_start_epoch', type=int, default=25, help='max epoch we can start at')
         parser.add_argument('--load_all', action='store_true', help='only use if you can fit all expert trajectories into RAM')
-        parser.add_argument('--texture', action='store_true', help='will distill textures instead')
-        parser.add_argument('--canvas_size', type=int, default=2, help='size of synthetic canvas')
-        parser.add_argument('--canvas_samples', type=int, default=1, help='number of canvas samples per iteration')
         parser.add_argument('--max_files', type=int, default=None, help='number of expert files to read (leave as None unless doing ablations)')
         parser.add_argument('--max_experts', type=int, default=None, help='number of experts to read per file (leave as None unless doing ablations)')
         parser.add_argument('--force_save', action='store_true', help='this will save images for 50ipc')

@@ -69,12 +69,6 @@ def get_loggable_images(images):
 def main(args):
     fix_seed(args.seed) # added by Franz
 
-    if args.zca and args.texture:
-        raise AssertionError("Cannot use zca and texture together")
-
-    if args.texture and args.data_init == "real":
-        print("WARNING: Using texture with real initialization will take a very long time to smooth out the boundaries between images.")
-
     if args.max_experts is not None and args.max_files is not None:
         args.total_experts = args.max_experts * args.max_files
 
@@ -177,11 +171,7 @@ def main(args):
 
     ''' initialize the synthetic data '''
     label_syn = torch.tensor([np.ones(args.ipc,dtype=np.int_)*i for i in range(num_classes)], dtype=torch.long, requires_grad=False, device=args.device).view(-1) # [0,0,0, 1,1,1, ..., 9,9,9]
-
-    if args.texture:
-        image_syn = torch.randn(size=(num_classes * args.ipc, channel, im_size[0]*args.canvas_size, im_size[1]*args.canvas_size), dtype=torch.float)
-    else:
-        image_syn = torch.randn(size=(num_classes * args.ipc, channel, im_size[0], im_size[1]), dtype=torch.float)
+    image_syn = torch.randn(size=(num_classes * args.ipc, channel, im_size[0], im_size[1]), dtype=torch.float)
 
     if args.unimodal != 'model':
         sensor_shape = sensor_all.shape[1:] if sensor_all.numel() > 0 else (args.n_input_features,)
@@ -197,19 +187,12 @@ def main(args):
         if args.unimodal != 'model' and args.unimodal != 'image':
             print('initialize synthetic sensor data from random real sensor data')
         with torch.no_grad():
-            if args.texture:
-                for c in range(num_classes):
-                    class_slice = slice(c * args.ipc, (c + 1) * args.ipc)
-                    for i in range(args.canvas_size):
-                        for j in range(args.canvas_size):
-                            image_syn[class_slice, :, i * im_size[0]:(i + 1) * im_size[0], j * im_size[1]:(j + 1) * im_size[1]] = torch.cat([get_images(images_all, c, 1) for _ in range(args.ipc)], dim=0)
-            else:
-                for c in range(num_classes):
-                    class_slice = slice(c * args.ipc, (c + 1) * args.ipc)
-                    class_indices = np.random.permutation(indices_class[c])[:args.ipc]
-                    image_syn[class_slice] = images_all[class_indices]
-                    if args.unimodal != 'model' and args.unimodal != 'image':
-                        sensor_syn[class_slice] = sensor_all[class_indices]
+            for c in range(num_classes):
+                class_slice = slice(c * args.ipc, (c + 1) * args.ipc)
+                class_indices = np.random.permutation(indices_class[c])[:args.ipc]
+                image_syn[class_slice] = images_all[class_indices]
+                if args.unimodal != 'model' and args.unimodal != 'image':
+                    sensor_syn[class_slice] = sensor_all[class_indices]
 
             if args.unimodal != 'model' and args.unimodal != 'image':
                 for c in range(num_classes):
@@ -326,7 +309,7 @@ def main(args):
                         sensor_syn_eval = None
 
                     args.lr_net = syn_lr.item()
-                    _, acc_train, acc_test = evaluate_synset(it_eval, net_eval, image_syn_eval, label_syn_eval, testloader, args, texture=args.texture, sensor_train=sensor_syn_eval)
+                    _, acc_train, acc_test = evaluate_synset(it_eval, net_eval, image_syn_eval, label_syn_eval, testloader, args, sensor_train=sensor_syn_eval)
                     #######################################################################
                     accs_test.append(acc_test)
                     accs_train.append(acc_train)
@@ -483,10 +466,6 @@ def main(args):
 
             x = syn_images[these_indices]
             this_y = y_hat[these_indices]
-
-            if args.texture:
-                x = torch.cat([torch.stack([torch.roll(im, (torch.randint(im_size[0]*args.canvas_size, (1,)), torch.randint(im_size[1]*args.canvas_size, (1,))), (1,2))[:,:im_size[0],:im_size[1]] for im in x]) for _ in range(args.canvas_samples)])
-                this_y = torch.cat([this_y for _ in range(args.canvas_samples)])
 
             if args.dsa and args.aug_chance > 0:
                 x = DiffAugment(x, args.dsa_strategy, param=args.dsa_param, aug_chance=args.aug_chance)
