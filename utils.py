@@ -36,10 +36,6 @@ def get_dataset(dataset, data_path, args=None):
         dst_test = datasets.CIFAR10(data_path, train=False, download=True, transform=transform)
         class_names = dst_train.classes
         class_map = {x:x for x in range(num_classes)}
-    
-    #####################################################################
-    # added by Franz
-    #####################################################################
 
     elif dataset == 'RaspiCar':
         args.window_size = 10
@@ -157,15 +153,10 @@ def get_dataset(dataset, data_path, args=None):
         class_map = {x: x for x in range(num_classes)}
         class_map_inv = None
 
-    #####################################################################
-
     else:
         exit('unknown dataset: %s'%dataset)
 
     if args.zca:
-        #####################################################################
-        # modified by Franz
-        #####################################################################
         images = []
         sensors = []
         labels = []
@@ -211,7 +202,6 @@ def get_dataset(dataset, data_path, args=None):
         else:
             dst_test = MultimodalTensorDataset(zca_images, sensors, labels)
             dst_test.scaler = scaler
-        #####################################################################
 
         args.zca_trans = zca
 
@@ -324,9 +314,6 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwar
     elif model == 'ConvNetAP':
         net = ConvNet(channel=channel, num_classes=num_classes, net_width=net_width, net_depth=net_depth, net_act=net_act, net_norm=net_norm, net_pooling='avgpooling')
 
-    #####################################################################
-    # added by Franz
-    #####################################################################
     elif model == 'MMSConvB':
         from networks import MMSConvB
         net = MMSConvB(
@@ -359,7 +346,6 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwar
             latent_heads=8,
             seq_dropout_prob=0.2
         )
-    #####################################################################
 
     else:
         net = None
@@ -387,9 +373,6 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug):
     else:
         net.eval()
 
-    #####################################################################
-    # modified by Franz
-    #####################################################################
     for i_batch, datum in enumerate(dataloader):
         if args.unimodal == 'model':
             img = datum[0].float().to(args.device)
@@ -410,7 +393,6 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug):
             output = net(img)
         else:
             output = net((img, sen))
-        #####################################################################
         loss = criterion(output, lab)
 
         acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
@@ -430,9 +412,6 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug):
     return loss_avg, acc_avg
 
 
-#####################################################################
-# modified by Franz
-#####################################################################
 def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, return_loss=False, sensor_train=None, training_logs=False):
     net = net.to(args.device)
     images_train = images_train.to(args.device)

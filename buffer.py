@@ -7,8 +7,8 @@ from utils import get_dataset, get_network, get_daparam,\
 import copy
 
 
-from utils import fix_seed, MultimodalTensorDataset # added by Franz
-import wandb                                        # added by Franz
+from utils import fix_seed, MultimodalTensorDataset
+import wandb
 
 
 import warnings
@@ -36,9 +36,6 @@ def main(args, trial=None):
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    #######################################################################
-    # modified by Franz:
-    #######################################################################
     ''' organize the real dataset '''
     images_all = []
     sensor_all = []
@@ -77,15 +74,10 @@ def main(args, trial=None):
     else:
         dst_train = MultimodalTensorDataset(copy.deepcopy(images_all.detach()), copy.deepcopy(sensor_all.detach()), copy.deepcopy(labels_all.detach()))
     trainloader = torch.utils.data.DataLoader(dst_train, batch_size=args.batch_size, shuffle=True, num_workers=0)
-    #######################################################################
 
     best_acc = 0.0
 
     for it in range(0, args.num_experts):
-        #######################################################################
-        # added by Franz:
-        #######################################################################
-        
         fix_seed(args.seed + it)
 
         run_config = dict(vars(args))
@@ -106,8 +98,6 @@ def main(args, trial=None):
         }
 
         with wandb.init(**wandb_kwargs):
-        #######################################################################
-
             ''' Train synthetic data '''
             teacher_net = get_network(args.model, channel, num_classes, im_size, **kwargs).to(args.device) # get a random model
             teacher_net.train()
@@ -132,10 +122,6 @@ def main(args, trial=None):
                 print("Itr: {}\tEpoch: {}\tTrain Acc: {}\tTest Acc: {}".format(it, e, train_acc, test_acc))
 
                 timestamps.append([p.detach().cpu() for p in teacher_net.parameters()])
-
-                #######################################################################
-                # added by Franz:
-                #######################################################################
                 
                 wandb.log({
                     'train_loss': float(train_loss),
@@ -151,7 +137,6 @@ def main(args, trial=None):
                     trial.report(test_acc, step=e)
                     if trial.should_prune():
                         raise optuna.exceptions.TrialPruned()
-                #######################################################################
 
                 if e in lr_schedule and args.decay:
                     lr *= 0.1

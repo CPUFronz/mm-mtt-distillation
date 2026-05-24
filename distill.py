@@ -11,8 +11,8 @@ import copy
 import random
 from reparam_module import ReparamModule
 
-import pandas as pd         # added by Franz
-from utils import fix_seed  # added by Franz
+import pandas as pd
+from utils import fix_seed
 
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -64,7 +64,7 @@ def get_loggable_images(images):
 
 
 def main(args):
-    fix_seed(args.seed) # added by Franz
+    fix_seed(args.seed)
 
     if args.max_experts is not None and args.max_files is not None:
         args.total_experts = args.max_experts * args.max_files
@@ -128,9 +128,6 @@ def main(args):
     print('Hyper-parameters: \n', args.__dict__)
     print('Evaluation model pool: ', model_eval_pool)
 
-    #######################################################################
-    # modified by Franz:
-    #######################################################################
     ''' organize the real dataset '''
     images_all = []
     sensor_all = []
@@ -212,8 +209,6 @@ def main(args):
         sensor_syn = sensor_syn.detach().to(args.device).requires_grad_(True)
         optimizer_sens = torch.optim.SGD([sensor_syn], lr=args.lr_img, momentum=0.5)
 
-    #######################################################################
-
     criterion = nn.CrossEntropyLoss().to(args.device)
 
     expert_dir = os.path.join(args.buffer_path, args.dataset)
@@ -255,9 +250,6 @@ def main(args):
     
     for it in range(0, args.Iteration+1):
         is_best = False
-        #######################################################################
-        # added by Franz
-        #######################################################################
 
         kwargs = {
             'unimodal': args.unimodal if hasattr(args, 'unimodal') else '',
@@ -265,9 +257,7 @@ def main(args):
             'n_sensors': args.n_sensors if hasattr(args, 'n_sensors') else None,
             'n_sensor_features': args.n_sensor_features if hasattr(args, 'n_sensor_features') else None
         }
-        #######################################################################
 
-        # writer.add_scalar('Progress', it, it)
         wandb.log({"Progress": it}, step=it)
         ''' Evaluate synthetic data '''
         if it in eval_it_pool:
@@ -280,14 +270,11 @@ def main(args):
                 accs_test = []
                 accs_train = []
                 for it_eval in range(args.num_eval):
-                    fix_seed(args.seed + it_eval) # added by Franz
+                    fix_seed(args.seed + it_eval)
 
                     net_eval = get_network(model_eval, channel, num_classes, im_size, **kwargs).to(args.device) # get a random model
 
                     eval_labs = label_syn
-                    #######################################################################
-                    # modified by Franz
-                    #######################################################################
                     with torch.no_grad():
                         image_save = image_syn
                         if args.unimodal != 'model':
@@ -303,7 +290,6 @@ def main(args):
 
                     args.lr_net = syn_lr.item()
                     _, acc_train, acc_test = evaluate_synset(it_eval, net_eval, image_syn_eval, label_syn_eval, testloader, args, sensor_train=sensor_syn_eval)
-                    #######################################################################
                     accs_test.append(acc_test)
                     accs_train.append(acc_train)
                 accs_test = np.array(accs_test)
@@ -356,7 +342,7 @@ def main(args):
                 log_eval_img(image_save, 'Clipped_Synthetic_Images', it)
                 
                 if args.zca:
-                    image_save = image_save.cpu() # modifedy by Franz
+                    image_save = image_save.cpu()
                     image_save = args.zca_trans.inverse_transform(image_save)
 
                     zca_path = os.path.join(save_dir, "images_zca_{}.pt".format(it))
@@ -421,7 +407,7 @@ def main(args):
         starting_params = torch.cat([p.data.to(args.device).reshape(-1) for p in starting_params], 0)
 
         syn_images = image_syn
-        if args.unimodal != 'model': # added by Franz
+        if args.unimodal != 'model':
             syn_sensor = sensor_syn
 
         y_hat = label_syn.to(args.device)
@@ -444,7 +430,7 @@ def main(args):
             if args.dsa and args.aug_chance > 0:
                 x = DiffAugment(x, args.dsa_strategy, param=args.dsa_param, aug_chance=args.aug_chance)
 
-            if args.unimodal != 'model': # added by Franz
+            if args.unimodal != 'model':
                 x = (x, syn_sensor[these_indices])
 
             if args.distributed:
@@ -476,14 +462,14 @@ def main(args):
 
         grand_loss = param_loss
 
-        optimizer_img.zero_grad()  if args.unimodal != 'sensor' else None                             # modified by Franz
-        optimizer_sens.zero_grad() if args.unimodal != 'model' and args.unimodal != 'image' else None # added by Franz
+        optimizer_img.zero_grad()  if args.unimodal != 'sensor' else None
+        optimizer_sens.zero_grad() if args.unimodal != 'model' and args.unimodal != 'image' else None
         optimizer_lr.zero_grad()
 
         grand_loss.backward()
 
-        optimizer_img.step()  if args.unimodal != 'sensor' else None                             # modified by Franz
-        optimizer_sens.step() if args.unimodal != 'model' and args.unimodal != 'image' else None # added by Franz
+        optimizer_img.step()  if args.unimodal != 'sensor' else None
+        optimizer_sens.step() if args.unimodal != 'model' and args.unimodal != 'image' else None
         optimizer_lr.step()
 
         wandb.log({"Grand_Loss": grand_loss.detach().cpu(),
