@@ -17,6 +17,55 @@ from utils import fix_seed  # added by Franz
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
+
+def log_eval_snapshot_artifact(eval_artifact_name, iteration, file_paths, is_best=False):
+    if not file_paths:
+        return
+
+    artifact = wandb.Artifact(
+        name=eval_artifact_name,
+        type="distillation_eval",
+        description="Synthetic distillation snapshot saved during evaluation.",
+        metadata={
+            "iteration": int(iteration),
+            "run_id": wandb.run.id,
+            "run_name": wandb.run.name,
+            "dataset": args.dataset,
+            "is_best_so_far": bool(is_best),
+            "files": [os.path.basename(path) for path in file_paths],
+        },
+    )
+
+    for file_path in file_paths:
+        artifact.add_file(file_path, name=os.path.basename(file_path))
+
+    aliases = ["latest", "iter_{}".format(int(iteration))]
+    if is_best:
+        aliases.append("best_so_far")
+
+    wandb.run.log_artifact(artifact, aliases=aliases)
+
+
+def log_eval_img(image_save, log_name, it, clip_val=2.5):
+    std = torch.std(image_save)
+    mean = torch.mean(image_save)
+    upsampled = torch.clip(image_save, min=mean - clip_val * std, max=mean + clip_val * std)
+    upsampled = get_loggable_images(upsampled)
+    if args.dataset != "ImageNet":
+        upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=2)
+        upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=3)
+    grid = torchvision.utils.make_grid(upsampled, nrow=10, normalize=True, scale_each=True)
+    wandb.log({log_name: wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
+
+
+def get_loggable_images(images):
+    if images.shape[1] in (1, 3):
+        return images
+
+    channel_idx = torch.linspace(0, images.shape[1] - 1, steps=3, device=images.device).round().long()
+    return images.index_select(1, channel_idx)
+
+
 def main(args):
     fix_seed(args.seed) # added by Franz
 
@@ -79,33 +128,6 @@ def main(args):
     eval_artifact_name = "distillation-eval-{}".format(wandb.run.id)
     wandb.run.summary["eval_artifact_collection"] = eval_artifact_name
 
-    def log_eval_snapshot_artifact(iteration, file_paths, is_best=False):
-        if not file_paths:
-            return
-
-        artifact = wandb.Artifact(
-            name=eval_artifact_name,
-            type="distillation_eval",
-            description="Synthetic distillation snapshot saved during evaluation.",
-            metadata={
-                "iteration": int(iteration),
-                "run_id": wandb.run.id,
-                "run_name": wandb.run.name,
-                "dataset": args.dataset,
-                "is_best_so_far": bool(is_best),
-                "files": [os.path.basename(path) for path in file_paths],
-            },
-        )
-
-        for file_path in file_paths:
-            artifact.add_file(file_path, name=os.path.basename(file_path))
-
-        aliases = ["latest", "iter_{}".format(int(iteration))]
-        if is_best:
-            aliases.append("best_so_far")
-
-        wandb.run.log_artifact(artifact, aliases=aliases)
-
     if args.batch_syn is None:
         args.batch_syn = num_classes * args.ipc
 
@@ -153,34 +175,6 @@ def main(args):
         print('real images channel %d, mean = %.4f, std = %.4f'%(ch, torch.mean(images_all[:, ch]), torch.std(images_all[:, ch])))
 
 
-    def get_class_indices(c, n):
-        idx_shuffle = np.random.permutation(indices_class[c])[:n]
-        return idx_shuffle
-
-
-    def get_images(c, n, idx_shuffle=None):  # get random n images from class c
-        if idx_shuffle is None:
-            idx_shuffle = get_class_indices(c, n)
-        return images_all[idx_shuffle]
-
-
-    def get_sensors(c, n, idx_shuffle=None):  # get random n sensor samples from class c
-        if sensor_all.numel() == 0:
-            raise ValueError('Requested real sensor initialization, but the current dataset does not provide sensor data.')
-
-        if idx_shuffle is None:
-            idx_shuffle = get_class_indices(c, n)
-        return sensor_all[idx_shuffle]
-
-
-    def get_loggable_images(images):
-        if images.shape[1] in (1, 3):
-            return images
-
-        channel_idx = torch.linspace(0, images.shape[1] - 1, steps=3, device=images.device).round().long()
-        return images.index_select(1, channel_idx)
-
-
     ''' initialize the synthetic data '''
     label_syn = torch.tensor([np.ones(args.ipc,dtype=np.int_)*i for i in range(num_classes)], dtype=torch.long, requires_grad=False, device=args.device).view(-1) # [0,0,0, 1,1,1, ..., 9,9,9]
 
@@ -208,19 +202,19 @@ def main(args):
                     class_slice = slice(c * args.ipc, (c + 1) * args.ipc)
                     for i in range(args.canvas_size):
                         for j in range(args.canvas_size):
-                            image_syn[class_slice, :, i * im_size[0]:(i + 1) * im_size[0], j * im_size[1]:(j + 1) * im_size[1]] = torch.cat([get_images(c, 1) for _ in range(args.ipc)], dim=0)
+                            image_syn[class_slice, :, i * im_size[0]:(i + 1) * im_size[0], j * im_size[1]:(j + 1) * im_size[1]] = torch.cat([get_images(images_all, c, 1) for _ in range(args.ipc)], dim=0)
             else:
                 for c in range(num_classes):
                     class_slice = slice(c * args.ipc, (c + 1) * args.ipc)
-                    class_indices = get_class_indices(c, args.ipc)
-                    image_syn[class_slice] = get_images(c, args.ipc, idx_shuffle=class_indices)
+                    class_indices = np.random.permutation(indices_class[c])[:args.ipc]
+                    image_syn[class_slice] = images_all[class_indices]
                     if args.unimodal != 'model' and args.unimodal != 'image':
-                        sensor_syn[class_slice] = get_sensors(c, args.ipc, idx_shuffle=class_indices)
+                        sensor_syn[class_slice] = sensor_all[class_indices]
 
             if args.unimodal != 'model' and args.unimodal != 'image':
                 for c in range(num_classes):
                     class_slice = slice(c * args.ipc, (c + 1) * args.ipc)
-                    sensor_syn[class_slice] = get_sensors(c, args.ipc)
+                    sensor_syn[class_slice] = sensor_all[class_indices]
     else:
         print('initialize synthetic data from random noise')
         if args.unimodal != 'model' and args.unimodal != 'image':
@@ -443,7 +437,7 @@ def main(args):
                         sensor_save_df = pd.DataFrame(sensor_save, columns=dst_test.scaler.get_feature_names_out())
                         wandb.log({'Synthetic_Sensors': wandb.Table(dataframe=sensor_save_df)}, step=it)
 
-                log_eval_snapshot_artifact(it, artifact_files, is_best=save_this_it)
+                log_eval_snapshot_artifact(eval_artifact_name, it, artifact_files, is_best=save_this_it)
 
         wandb.log({"Synthetic_LR": syn_lr.detach().cpu()}, step=it)
 
