@@ -17,7 +17,7 @@ from networks import MLP, ConvNet, LeNet, AlexNet, VGG11BN, VGG11, ResNet18, Res
 
 
 # TODO: fix seeds when creating test dataloaders?
-def get_dataset(dataset, data_path, batch_size=1, args=None):
+def get_dataset(dataset, data_path, args=None):
     class_map = None
     loader_train_dict = None
     class_map_inv = None
@@ -860,8 +860,7 @@ def parse_args(mode):
     parser.add_argument('--dataset', type=str, default='CIFAR10', help='dataset')
     parser.add_argument('--model', type=str, default='ConvNet', help='model')
     parser.add_argument('--lr_teacher', type=float, default=0.01, help='learning rate for updating network parameters' if mode == 'buffer' else 'initialization for synthetic learning rate')
-    parser.add_argument('--batch_train', type=int, default=256, help='batch size for training networks')
-    parser.add_argument('--batch_real', type=int, default=256, help='batch size for real loader' if mode == 'buffer' else 'batch size for real data')
+    parser.add_argument('--batch_size', type=int, default=256, help='batch size for training networks')
     parser.add_argument('--dsa', type=str, default='True', choices=['True', 'False'], help='whether to use differentiable Siamese augmentation.')
     parser.add_argument('--dsa_strategy', type=str, default='color_crop_cutout_flip_scale_rotate', help='differentiable Siamese augmentation strategy')
     parser.add_argument('--data_path', type=str, default='data', help='dataset path')

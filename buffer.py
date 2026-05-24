@@ -24,7 +24,7 @@ def main(args, trial=None):
     if args.model not in ['MMSConvB', 'Perceiver']:
         args.unimodal = 'model'
 
-    channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, loader_train_dict, class_map, class_map_inv = get_dataset(args.dataset, args.data_path, args.batch_real, args.subset, args=args)
+    channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, loader_train_dict, class_map, class_map_inv = get_dataset(args.dataset, args.data_path, args=args)
 
     # print('\n================== Exp %d ==================\n '%exp)
     print('Hyper-parameters: \n', args.__dict__)
@@ -76,7 +76,7 @@ def main(args, trial=None):
         dst_train = TensorDataset(copy.deepcopy(images_all.detach()), copy.deepcopy(labels_all.detach()))
     else:
         dst_train = MultimodalTensorDataset(copy.deepcopy(images_all.detach()), copy.deepcopy(sensor_all.detach()), copy.deepcopy(labels_all.detach()))
-    trainloader = torch.utils.data.DataLoader(dst_train, batch_size=args.batch_train, shuffle=True, num_workers=0)
+    trainloader = torch.utils.data.DataLoader(dst_train, batch_size=args.batch_size, shuffle=True, num_workers=0)
     #######################################################################
 
     best_acc = 0.0
@@ -183,9 +183,7 @@ if __name__ == '__main__':
         import optuna
         def objective(trial):
             trial_args = copy.deepcopy(args)
-            trial_args.batch_train = trial.suggest_categorical('batch_size', [64, 128, 256, 512])
-            trial_args.batch_real = trial_args.batch_train
-            #trial_args.n_groups = trial.suggest_categorical('n_groups', [1, 2, 4, 8, 16, 32])
+            trial_args.batch_size = trial.suggest_categorical('batch_size', [64, 128, 256, 512])
             trial_args.train_epochs = trial.suggest_categorical('epochs', [50, 100])
             trial_args.lr_teacher = trial.suggest_float('lr', 1e-7, 5e-1, log=True)
             return main(trial_args, trial)
