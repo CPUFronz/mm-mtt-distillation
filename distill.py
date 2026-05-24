@@ -392,17 +392,8 @@ def main(args):
                     wandb.log({"Synthetic_Images": wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
                     wandb.log({'Synthetic_Pixels': wandb.Histogram(torch.nan_to_num(image_save.detach().cpu()))}, step=it)
 
-                    for clip_val in [2.5]:
-                        std = torch.std(image_save)
-                        mean = torch.mean(image_save)
-                        upsampled = torch.clip(image_save, min=mean-clip_val*std, max=mean+clip_val*std)
-                        upsampled = get_loggable_images(upsampled)
-                        if args.dataset != "ImageNet":
-                            upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=2)
-                            upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=3)
-                        grid = torchvision.utils.make_grid(upsampled, nrow=10, normalize=True, scale_each=True)
-                        wandb.log({"Clipped_Synthetic_Images/std_{}".format(clip_val): wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
-
+                    log_eval_img(image_save, f'Clipped_Synthetic_Images/', it)
+                    
                     if args.zca:
                         image_save = image_save.cpu() # modifedy by Franz
                         image_save = args.zca_trans.inverse_transform(image_save)
@@ -419,17 +410,8 @@ def main(args):
                         wandb.log({"Reconstructed_Images": wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
                         wandb.log({'Reconstructed_Pixels': wandb.Histogram(torch.nan_to_num(image_save.detach().cpu()))}, step=it)
 
-                        for clip_val in [2.5]:
-                            std = torch.std(image_save)
-                            mean = torch.mean(image_save)
-                            upsampled = torch.clip(image_save, min=mean - clip_val * std, max=mean + clip_val * std)
-                            upsampled = get_loggable_images(upsampled)
-                            if args.dataset != "ImageNet":
-                                upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=2)
-                                upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=3)
-                            grid = torchvision.utils.make_grid(upsampled, nrow=10, normalize=True, scale_each=True)
-                            wandb.log({"Clipped_Reconstructed_Images/std_{}".format(clip_val): wandb.Image(
-                                torch.nan_to_num(grid.detach().cpu()))}, step=it)
+                        log_eval_img(image_save, f'Clipped_Synthetic+ZCA-Inverted_Images/', it)
+                        
 
                     if args.unimodal != 'model':
                         sensor_save = sensor_tensor.numpy()
