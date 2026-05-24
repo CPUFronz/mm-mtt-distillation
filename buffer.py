@@ -30,9 +30,7 @@ def main(args, trial=None):
     print('Hyper-parameters: \n', args.__dict__)
 
     save_dir = os.path.join(args.buffer_path, args.dataset)
-    if args.dataset == "ImageNet":
-        save_dir = os.path.join(save_dir, args.subset, str(args.res))
-    if args.dataset in ["CIFAR10", "CIFAR100"] and not args.zca:
+    if args.dataset == "CIFAR10" and not args.zca:
         save_dir += "_NO_ZCA"
     save_dir = os.path.join(save_dir, args.model)
     if not os.path.exists(save_dir):

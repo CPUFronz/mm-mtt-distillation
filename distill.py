@@ -51,9 +51,6 @@ def log_eval_img(image_save, log_name, it, clip_val=2.5):
     mean = torch.mean(image_save)
     upsampled = torch.clip(image_save, min=mean - clip_val * std, max=mean + clip_val * std)
     upsampled = get_loggable_images(upsampled)
-    if args.dataset != "ImageNet":
-        upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=2)
-        upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=3)
     grid = torchvision.utils.make_grid(upsampled, nrow=10, normalize=True, scale_each=True)
     wandb.log({log_name: wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
 
@@ -220,9 +217,7 @@ def main(args):
     criterion = nn.CrossEntropyLoss().to(args.device)
 
     expert_dir = os.path.join(args.buffer_path, args.dataset)
-    if args.dataset == "ImageNet":
-        expert_dir = os.path.join(expert_dir, args.subset, str(args.res))
-    if args.dataset in ["CIFAR10", "CIFAR100"] and not args.zca:
+    if args.dataset == "CIFAR10" and not args.zca:
         expert_dir += "_NO_ZCA"
     expert_dir = os.path.join(expert_dir, args.model)
     print("Expert Dir: {}".format(expert_dir))
@@ -368,9 +363,6 @@ def main(args):
 
 
                 upsampled = get_loggable_images(image_save)
-                if args.dataset != "ImageNet":
-                    upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=2)
-                    upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=3)
                 grid = torchvision.utils.make_grid(upsampled, nrow=10, normalize=True, scale_each=True)
                 wandb.log({"Synthetic_Images": wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
                 wandb.log({'Synthetic_Pixels': wandb.Histogram(torch.nan_to_num(image_save.detach().cpu()))}, step=it)
@@ -386,9 +378,6 @@ def main(args):
                     artifact_files.append(zca_path)
 
                     upsampled = get_loggable_images(image_save)
-                    if args.dataset != "ImageNet":
-                        upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=2)
-                        upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=3)
                     grid = torchvision.utils.make_grid(upsampled, nrow=10, normalize=True, scale_each=True)
                     wandb.log({"Synthetic+ZCA-Inverted_Images": wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
                     wandb.log({'Synthetic+ZCA-Inverted_Pixels': wandb.Histogram(torch.nan_to_num(image_save.detach().cpu()))}, step=it)

@@ -16,38 +16,8 @@ import wandb
 from networks import MLP, ConvNet, LeNet, AlexNet, VGG11BN, VGG11, ResNet18, ResNet18BN_AP, ResNet18_AP, Widar_CNN3D
 
 
-class Config:
-    imagenette = [0, 217, 482, 491, 497, 566, 569, 571, 574, 701]
-
-    # ["australian_terrier", "border_terrier", "samoyed", "beagle", "shih-tzu", "english_foxhound", "rhodesian_ridgeback", "dingo", "golden_retriever", "english_sheepdog"]
-    imagewoof = [193, 182, 258, 162, 155, 167, 159, 273, 207, 229]
-
-    # ["tabby_cat", "bengal_cat", "persian_cat", "siamese_cat", "egyptian_cat", "lion", "tiger", "jaguar", "snow_leopard", "lynx"]
-    imagemeow = [281, 282, 283, 284, 285, 291, 292, 290, 289, 287]
-
-    # ["peacock", "flamingo", "macaw", "pelican", "king_penguin", "bald_eagle", "toucan", "ostrich", "black_swan", "cockatoo"]
-    imagesquawk = [84, 130, 88, 144, 145, 22, 96, 9, 100, 89]
-
-    # ["pineapple", "banana", "strawberry", "orange", "lemon", "pomegranate", "fig", "bell_pepper", "cucumber", "green_apple"]
-    imagefruit = [953, 954, 949, 950, 951, 957, 952, 945, 943, 948]
-
-    # ["bee", "ladys slipper", "banana", "lemon", "corn", "school_bus", "honeycomb", "lion", "garden_spider", "goldfinch"]
-    imageyellow = [309, 986, 954, 951, 987, 779, 599, 291, 72, 11]
-
-    dict = {
-        "imagenette" : imagenette,
-        "imagewoof" : imagewoof,
-        "imagefruit": imagefruit,
-        "imageyellow": imageyellow,
-        "imagemeow": imagemeow,
-        "imagesquawk": imagesquawk,
-    }
-
-config = Config()
-
-
 # TODO: fix seeds when creating test dataloaders?
-def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None):
+def get_dataset(dataset, data_path, batch_size=1, args=None):
     class_map = None
     loader_train_dict = None
     class_map_inv = None
@@ -66,74 +36,6 @@ def get_dataset(dataset, data_path, batch_size=1, subset="imagenette", args=None
         dst_test = datasets.CIFAR10(data_path, train=False, download=True, transform=transform)
         class_names = dst_train.classes
         class_map = {x:x for x in range(num_classes)}
-
-
-    elif dataset == 'Tiny':
-        channel = 3
-        im_size = (64, 64)
-        num_classes = 200
-        mean = [0.485, 0.456, 0.406]
-        std = [0.229, 0.224, 0.225]
-        if args.zca:
-            transform = transforms.Compose([transforms.ToTensor()])
-        else:
-            transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=mean, std=std)])
-        dst_train = datasets.ImageFolder(os.path.join(data_path, "train"), transform=transform) # no augmentation
-        dst_test = datasets.ImageFolder(os.path.join(data_path, "val", "images"), transform=transform)
-        class_names = dst_train.classes
-        class_map = {x:x for x in range(num_classes)}
-
-
-    elif dataset == 'ImageNet':
-        channel = 3
-        im_size = (128, 128)
-        num_classes = 10
-
-        config.img_net_classes = config.dict[subset]
-
-        mean = [0.485, 0.456, 0.406]
-        std = [0.229, 0.224, 0.225]
-        if args.zca:
-            transform = transforms.Compose([transforms.ToTensor(),
-                                        transforms.Resize(im_size),
-                                        transforms.CenterCrop(im_size)])
-        else:
-            transform = transforms.Compose([transforms.ToTensor(),
-                                            transforms.Normalize(mean=mean, std=std),
-                                            transforms.Resize(im_size),
-                                            transforms.CenterCrop(im_size)])
-
-        dst_train = datasets.ImageNet(data_path, split="train", transform=transform) # no augmentation
-        dst_train_dict = {c : torch.utils.data.Subset(dst_train, np.squeeze(np.argwhere(np.equal(dst_train.targets, config.img_net_classes[c])))) for c in range(len(config.img_net_classes))}
-        dst_train = torch.utils.data.Subset(dst_train, np.squeeze(np.argwhere(np.isin(dst_train.targets, config.img_net_classes))))
-        loader_train_dict = {c : torch.utils.data.DataLoader(dst_train_dict[c], batch_size=batch_size, shuffle=True, num_workers=16) for c in range(len(config.img_net_classes))}
-        dst_test = datasets.ImageNet(data_path, split="val", transform=transform)
-        dst_test = torch.utils.data.Subset(dst_test, np.squeeze(np.argwhere(np.isin(dst_test.targets, config.img_net_classes))))
-        for c in range(len(config.img_net_classes)):
-            dst_test.dataset.targets[dst_test.dataset.targets == config.img_net_classes[c]] = c
-            dst_train.dataset.targets[dst_train.dataset.targets == config.img_net_classes[c]] = c
-        print(dst_test.dataset)
-        class_map = {x: i for i, x in enumerate(config.img_net_classes)}
-        class_map_inv = {i: x for i, x in enumerate(config.img_net_classes)}
-        class_names = None
-
-
-    elif dataset.startswith('CIFAR100'):
-        channel = 3
-        im_size = (32, 32)
-        num_classes = 100
-        mean = [0.4914, 0.4822, 0.4465]
-        std = [0.2023, 0.1994, 0.2010]
-
-        if args.zca:
-            transform = transforms.Compose([transforms.ToTensor()])
-        else:
-            transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=mean, std=std)])
-        dst_train = datasets.CIFAR100(data_path, train=True, download=True, transform=transform)  # no augmentation
-        dst_test = datasets.CIFAR100(data_path, train=False, download=True, transform=transform)
-        class_names = dst_train.classes
-        class_map = {x: x for x in range(num_classes)}
-
     
     #####################################################################
     # added by Franz
@@ -480,9 +382,6 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug):
     loss_avg, acc_avg, num_exp = 0, 0, 0
     net = net.to(args.device)
 
-    if args.dataset == "ImageNet":
-        class_map = {x: i for i, x in enumerate(config.img_net_classes)}
-
     if mode == 'train':
         net.train()
     else:
@@ -504,9 +403,6 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug):
         if aug:
             if args.dsa:
                 img = DiffAugment(img, args.dsa_strategy, param=args.dsa_param, aug_chance=args.aug_chance)
-
-        if args.dataset == "ImageNet" and mode != "train":
-            lab = torch.tensor([class_map[x.item()] for x in lab]).to(args.device)
 
         n_b = lab.shape[0]
 
@@ -962,9 +858,7 @@ def parse_args(mode):
 
     parser = argparse.ArgumentParser(description='Parameter Processing')
     parser.add_argument('--dataset', type=str, default='CIFAR10', help='dataset')
-    parser.add_argument('--subset', type=str, default='imagenette', help='subset' if mode == 'buffer' else 'ImageNet subset. This only does anything when --dataset=ImageNet')
     parser.add_argument('--model', type=str, default='ConvNet', help='model')
-    parser.add_argument('--res', type=int, default=128, help='resolution for imagenet')
     parser.add_argument('--lr_teacher', type=float, default=0.01, help='learning rate for updating network parameters' if mode == 'buffer' else 'initialization for synthetic learning rate')
     parser.add_argument('--batch_train', type=int, default=256, help='batch size for training networks')
     parser.add_argument('--batch_real', type=int, default=256, help='batch size for real loader' if mode == 'buffer' else 'batch size for real data')
