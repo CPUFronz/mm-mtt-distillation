@@ -78,7 +78,7 @@ def main(args):
         args.unimodal = 'model'
 
     eval_it_pool = np.arange(0, args.Iteration + 1, args.eval_it).tolist()
-    channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, loader_train_dict, class_map, class_map_inv = get_dataset(args.dataset, args.data_path, args=args)
+    channel, im_size, num_classes, _, _, _, dst_train, dst_test, testloader, class_map = get_dataset(args)
     model_eval_pool = get_eval_pool(args.eval_mode, args.model, args.model)
 
     im_res = im_size[0]

@@ -24,7 +24,7 @@ def main(args, trial=None):
     if args.model not in ['MMSConvB', 'Perceiver']:
         args.unimodal = 'model'
 
-    channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, loader_train_dict, class_map, class_map_inv = get_dataset(args.dataset, args.data_path, args=args)
+    channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, class_map = get_dataset(args)
 
     # print('\n================== Exp %d ==================\n '%exp)
     print('Hyper-parameters: \n', args.__dict__)

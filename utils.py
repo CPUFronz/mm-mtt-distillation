@@ -16,13 +16,12 @@ import wandb
 from networks import MLP, ConvNet, LeNet, AlexNet, VGG11BN, VGG11, ResNet18, ResNet18BN_AP, ResNet18_AP, Widar_CNN3D
 
 
-# TODO: fix seeds when creating test dataloaders?
-def get_dataset(dataset, data_path, args=None):
-    class_map = None
-    loader_train_dict = None
-    class_map_inv = None
+def get_dataset(args):
+    fix_seed(args.seed)
 
-    if dataset == 'CIFAR10':
+    class_map = None
+
+    if args.dataset == 'CIFAR10':
         channel = 3
         im_size = (32, 32)
         num_classes = 10
@@ -32,12 +31,12 @@ def get_dataset(dataset, data_path, args=None):
             transform = transforms.Compose([transforms.ToTensor()])
         else:
             transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=mean, std=std)])
-        dst_train = datasets.CIFAR10(data_path, train=True, download=True, transform=transform) # no augmentation
-        dst_test = datasets.CIFAR10(data_path, train=False, download=True, transform=transform)
+        dst_train = datasets.CIFAR10(args.data_path, train=True, download=True, transform=transform) # no augmentation
+        dst_test = datasets.CIFAR10(args.data_path, train=False, download=True, transform=transform)
         class_names = dst_train.classes
         class_map = {x:x for x in range(num_classes)}
 
-    elif dataset == 'RaspiCar':
+    elif args.dataset == 'RaspiCar':
         args.window_size = 10
         args.test_split = 0.2
         args.image_size = (32, 32)
@@ -64,9 +63,8 @@ def get_dataset(dataset, data_path, args=None):
         num_classes = NUM_STEERING_ANGLES
         class_names = [str(i) for i in range(num_classes)]
         class_map = {x: x for x in range(num_classes)}
-        class_map_inv = None
 
-    elif dataset == 'ActionSense':
+    elif args.dataset == 'ActionSense':
         args.window_size = 10
         args.test_split = 0.2
         args.image_size = (32, 32)
@@ -104,9 +102,8 @@ def get_dataset(dataset, data_path, args=None):
         num_classes = df['label'].nunique()
         class_names = encoder.classes_.tolist()
         class_map = {x: x for x in range(num_classes)}
-        class_map_inv = None
 
-    elif dataset == 'RoboMNIST':
+    elif args.dataset == 'RoboMNIST':
         args.window_size = 10
         args.test_split = 0.2
         args.image_size = (32, 32)
@@ -137,10 +134,9 @@ def get_dataset(dataset, data_path, args=None):
         num_classes = df['label'].nunique()
         class_names = sorted(df['label'].unique().tolist())
         class_map = {x: x for x in range(num_classes)}
-        class_map_inv = None
 
-    elif dataset == 'Widar':
-        widar_root = os.path.join(data_path, 'Widardata2')
+    elif args.dataset == 'Widar':
+        widar_root = os.path.join(args.data_path, 'Widardata2')
         dst_train = Widar_Dataset(os.path.join(widar_root, 'train'))
         dst_test = Widar_Dataset(os.path.join(widar_root, 'test'))
 
@@ -151,10 +147,9 @@ def get_dataset(dataset, data_path, args=None):
         std = [1.0 for _ in range(channel)]
         class_names = [os.path.basename(os.path.normpath(folder)) for folder in dst_train.folder]
         class_map = {x: x for x in range(num_classes)}
-        class_map_inv = None
 
     else:
-        exit('unknown dataset: %s'%dataset)
+        exit(f'unknown dataset: {args.dataset}')
 
     if args.zca:
         images = []
@@ -207,7 +202,7 @@ def get_dataset(dataset, data_path, args=None):
 
     testloader = torch.utils.data.DataLoader(dst_test, batch_size=128, shuffle=False, num_workers=2)
 
-    return channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, loader_train_dict, class_map, class_map_inv
+    return channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, class_map
 
 
 
@@ -473,7 +468,6 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
         return net, acc_train_list, acc_test, loss_train_list, loss_test
     else:
         return net, acc_train_list, acc_test
-#####################################################################
 
 
 def get_eval_pool(eval_mode, model, model_eval):
@@ -780,7 +774,6 @@ AUGMENT_FNS = {
     'amplitude':       [rand_amplitude],
     'noise':           [rand_noise],
 }
-#####################################################################
 
 
 #####################################################################
