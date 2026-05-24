@@ -366,41 +366,41 @@ def main(args):
 
                 wandb.log({"Pixels": wandb.Histogram(torch.nan_to_num(image_syn.detach().cpu()))}, step=it)
 
-                if args.ipc < 50 or args.force_save:
+
+                upsampled = get_loggable_images(image_save)
+                if args.dataset != "ImageNet":
+                    upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=2)
+                    upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=3)
+                grid = torchvision.utils.make_grid(upsampled, nrow=10, normalize=True, scale_each=True)
+                wandb.log({"Synthetic_Images": wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
+                wandb.log({'Synthetic_Pixels': wandb.Histogram(torch.nan_to_num(image_save.detach().cpu()))}, step=it)
+
+                log_eval_img(image_save, 'Clipped_Synthetic_Images', it)
+                
+                if args.zca:
+                    image_save = image_save.cpu() # modifedy by Franz
+                    image_save = args.zca_trans.inverse_transform(image_save)
+
+                    zca_path = os.path.join(save_dir, "images_zca_{}.pt".format(it))
+                    torch.save(image_save.cpu(), zca_path)
+                    artifact_files.append(zca_path)
+
                     upsampled = get_loggable_images(image_save)
                     if args.dataset != "ImageNet":
                         upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=2)
                         upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=3)
                     grid = torchvision.utils.make_grid(upsampled, nrow=10, normalize=True, scale_each=True)
-                    wandb.log({"Synthetic_Images": wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
-                    wandb.log({'Synthetic_Pixels': wandb.Histogram(torch.nan_to_num(image_save.detach().cpu()))}, step=it)
+                    wandb.log({"Synthetic+ZCA-Inverted_Images": wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
+                    wandb.log({'Synthetic+ZCA-Inverted_Pixels': wandb.Histogram(torch.nan_to_num(image_save.detach().cpu()))}, step=it)
 
-                    log_eval_img(image_save, f'Clipped_Synthetic_Images/', it)
+                    log_eval_img(image_save, 'Clipped_Synthetic+ZCA-Inverted_Images', it)
                     
-                    if args.zca:
-                        image_save = image_save.cpu() # modifedy by Franz
-                        image_save = args.zca_trans.inverse_transform(image_save)
 
-                        zca_path = os.path.join(save_dir, "images_zca_{}.pt".format(it))
-                        torch.save(image_save.cpu(), zca_path)
-                        artifact_files.append(zca_path)
-
-                        upsampled = get_loggable_images(image_save)
-                        if args.dataset != "ImageNet":
-                            upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=2)
-                            upsampled = torch.repeat_interleave(upsampled, repeats=4, dim=3)
-                        grid = torchvision.utils.make_grid(upsampled, nrow=10, normalize=True, scale_each=True)
-                        wandb.log({"Reconstructed_Images": wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
-                        wandb.log({'Reconstructed_Pixels': wandb.Histogram(torch.nan_to_num(image_save.detach().cpu()))}, step=it)
-
-                        log_eval_img(image_save, f'Clipped_Synthetic+ZCA-Inverted_Images/', it)
-                        
-
-                    if args.unimodal != 'model':
-                        sensor_save = sensor_tensor.numpy()
-                        sensor_save = dst_test.scaler.inverse_transform(sensor_save)
-                        sensor_save_df = pd.DataFrame(sensor_save, columns=dst_test.scaler.get_feature_names_out())
-                        wandb.log({'Synthetic_Sensors': wandb.Table(dataframe=sensor_save_df)}, step=it)
+                if args.unimodal != 'model':
+                    sensor_save = sensor_tensor.numpy()
+                    sensor_save = dst_test.scaler.inverse_transform(sensor_save)
+                    sensor_save_df = pd.DataFrame(sensor_save, columns=dst_test.scaler.get_feature_names_out())
+                    wandb.log({'Synthetic_Sensors': wandb.Table(dataframe=sensor_save_df)}, step=it)
 
                 log_eval_snapshot_artifact(eval_artifact_name, it, artifact_files, is_best=save_this_it)
 

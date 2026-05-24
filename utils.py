@@ -476,7 +476,7 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwar
     return net
 
 
-def epoch(mode, dataloader, net, optimizer, criterion, args, aug, texture=False):
+def epoch(mode, dataloader, net, optimizer, criterion, args, aug):
     loss_avg, acc_avg, num_exp = 0, 0, 0
     net = net.to(args.device)
 
@@ -1005,7 +1005,6 @@ def parse_args(mode):
         parser.add_argument('--load_all', action='store_true', help='only use if you can fit all expert trajectories into RAM')
         parser.add_argument('--max_files', type=int, default=None, help='number of expert files to read (leave as None unless doing ablations)')
         parser.add_argument('--max_experts', type=int, default=None, help='number of experts to read per file (leave as None unless doing ablations)')
-        parser.add_argument('--force_save', action='store_true', help='this will save images for 50ipc')
         parser.add_argument('--min_start_epoch', type=int, default=0, help='min epoch we can start at')
 
     return parser.parse_args()
