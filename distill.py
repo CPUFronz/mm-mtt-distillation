@@ -41,7 +41,7 @@ def log_eval_snapshot_artifact(eval_artifact_name, iteration, file_paths, is_bes
 
     aliases = ["latest", "iter_{}".format(int(iteration))]
     if is_best:
-        aliases.append("best_so_far")
+        aliases.append("best")
 
     wandb.run.log_artifact(artifact, aliases=aliases)
 
@@ -251,12 +251,10 @@ def main(args):
         random.shuffle(buffer)
 
     best_acc = {m: 0 for m in model_eval_pool}
-
     best_std = {m: 0 for m in model_eval_pool}
-
+    
     for it in range(0, args.Iteration+1):
-        save_this_it = False
-
+        is_best = False
         #######################################################################
         # added by Franz
         #######################################################################
@@ -315,7 +313,7 @@ def main(args):
                 if acc_test_mean > best_acc[model_eval]:
                     best_acc[model_eval] = acc_test_mean
                     best_std[model_eval] = acc_test_std
-                    save_this_it = True
+                    is_best = True
                 print('Evaluate %d random %s, mean = %.4f std = %.4f\n-------------------------'%(len(accs_test), model_eval, acc_test_mean, acc_test_std))
                 
                 wandb.log({'Accuracy/': acc_test_mean}, step=it)
@@ -324,7 +322,7 @@ def main(args):
                 wandb.log({'Max_Std/': best_std[model_eval]}, step=it)
 
 
-        if it in eval_it_pool and (save_this_it or it % 1000 == 0):
+        if it in eval_it_pool:
             with torch.no_grad():
                 image_save = image_syn.to(args.device)
 
@@ -341,27 +339,15 @@ def main(args):
                 torch.save(label_syn.cpu(), label_path)
                 artifact_files.extend([image_path, label_path])
 
-                if save_this_it:
-                    image_best_path = os.path.join(save_dir, "images_best.pt")
-                    label_best_path = os.path.join(save_dir, "labels_best.pt")
-                    torch.save(image_save.cpu(), image_best_path)
-                    torch.save(label_syn.cpu(), label_best_path)
-                    artifact_files.extend([image_best_path, label_best_path])
-
                 if args.unimodal != 'model':
                     sensor_tensor = sensor_syn.detach().cpu()
                     sensor_path = os.path.join(save_dir, "sensor_{}.pt".format(it))
                     torch.save(sensor_tensor, sensor_path)
                     artifact_files.append(sensor_path)
 
-                    if save_this_it:
-                        sensor_best_path = os.path.join(save_dir, "sensor_best.pt")
-                        torch.save(sensor_tensor, sensor_best_path)
-                        artifact_files.append(sensor_best_path)
-
                 wandb.log({"Pixels": wandb.Histogram(torch.nan_to_num(image_syn.detach().cpu()))}, step=it)
 
-
+                
                 upsampled = get_loggable_images(image_save)
                 grid = torchvision.utils.make_grid(upsampled, nrow=10, normalize=True, scale_each=True)
                 wandb.log({"Synthetic_Images": wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
@@ -391,12 +377,11 @@ def main(args):
                     sensor_save_df = pd.DataFrame(sensor_save, columns=dst_test.scaler.get_feature_names_out())
                     wandb.log({'Synthetic_Sensors': wandb.Table(dataframe=sensor_save_df)}, step=it)
 
-                log_eval_snapshot_artifact(eval_artifact_name, it, artifact_files, is_best=save_this_it)
+                log_eval_snapshot_artifact(eval_artifact_name, it, artifact_files, is_best=is_best)
 
         wandb.log({"Synthetic_LR": syn_lr.detach().cpu()}, step=it)
 
         student_net = get_network(args.model, channel, num_classes, im_size, dist=False, **kwargs).to(args.device)  # get a random model
-
         student_net = ReparamModule(student_net)
 
         if args.distributed:
