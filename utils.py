@@ -461,12 +461,10 @@ ParamDiffAug = {  # shadi version 21 April
     # Amplitude params
     'amplitude': 0.3,  # uniform scale in [1 - amp/2, 1 + amp/2]
     'noise': 0.03,  # Gaussian noise std
-    # Internal
-    'batchmode': False,
 }
 
 
-def DiffAugment(x, strategy='', seed=-1, param=None, aug_chance=0.5):
+def DiffAugment(x, strategy='', param=None, aug_chance=0.5):
     """
     Differentiable augmentation for BVP data.
 
@@ -474,18 +472,12 @@ def DiffAugment(x, strategy='', seed=-1, param=None, aug_chance=0.5):
         x        : Tensor [B, T, H, W]
         strategy : '-'-separated aug names, e.g. 'flip_h-noise-temporal_shift-scale'
                    Use '|' NOT '_' as separator (aug names contain underscores).
-        seed     : -1 for sample-wise random, else batch-wise random
         param    : ParamDiffAug dict
         aug_chance : Probability of applying each augmentation
 
     Returns:
         Augmented tensor [B, T, H, W]
     """
-    if seed == -1:
-        param['batchmode'] = False
-    else:
-        param['batchmode'] = True
-
     if not strategy or strategy.lower() == 'none':
         return x
 
@@ -513,8 +505,6 @@ def rand_flip_h(x, param):
     ⚠ Skip if 'slide_left' and 'slide_right' are different class labels.
     """
     randf = torch.rand(x.size(0), 1, 1, 1, device=x.device)
-    if param['batchmode']:
-        randf[:] = randf[0]
     return torch.where(randf < param['prob_flip_h'], x.flip(2), x)
 
 
@@ -524,8 +514,6 @@ def rand_flip_w(x, param):
     Physical meaning: mirrors the gesture forward ↔ backward.
     """
     randf = torch.rand(x.size(0), 1, 1, 1, device=x.device)
-    if param['batchmode']:
-        randf[:] = randf[0]
     return torch.where(randf < param['prob_flip_w'], x.flip(3), x)
 
 
@@ -542,8 +530,6 @@ def rand_scale_velocity(x, param):
     theta = [[[sx[i], 0,    0],
               [0,    sy[i], 0]] for i in range(x.shape[0])]
     theta = torch.tensor(theta, dtype=torch.float)
-    if param['batchmode']:
-        theta[:] = theta[0]
     grid = F.affine_grid(theta, x.shape, align_corners=True).to(x.device)
     return F.grid_sample(x, grid, align_corners=True)
 
@@ -557,9 +543,6 @@ def rand_translate_velocity(x, param):
     shift_w  = int(x.size(3) * ratio + 0.5)
     trans_h = torch.randint(-shift_h, shift_h + 1, size=[x.size(0), 1, 1], device=x.device)
     trans_w = torch.randint(-shift_w, shift_w + 1, size=[x.size(0), 1, 1], device=x.device)
-    if param['batchmode']:
-        trans_h[:] = trans_h[0]
-        trans_w[:] = trans_w[0]
 
     grid_b, grid_h, grid_w = torch.meshgrid(
         torch.arange(x.size(0), dtype=torch.long, device=x.device),
@@ -587,9 +570,6 @@ def rand_cutout_velocity(x, param):
                           size=[x.size(0), 1, 1], device=x.device)
     off_w = torch.randint(0, x.size(3) + (1 - cutout_w % 2),
                           size=[x.size(0), 1, 1], device=x.device)
-    if param['batchmode']:
-        off_h[:] = off_h[0]
-        off_w[:] = off_w[0]
 
     grid_b, grid_h, grid_w = torch.meshgrid(
         torch.arange(x.size(0),  dtype=torch.long, device=x.device),
@@ -619,8 +599,6 @@ def rand_temporal_shift(x, param):
     # Normalized continuous shift in [-1, 1] space
     max_norm = param['max_temporal_shift'] / (T / 2.0)
     shifts   = (torch.rand(B, device=x.device) * 2 - 1) * max_norm  # float ✓
-    if param['batchmode']:
-        shifts[:] = shifts[0]
 
     # ── Reshape: [B, T, H, W] → [B, H*W, 1, T] ─────────────────────────────
     #    H*W acts as "channels", T is now the spatial width → grid_sample works ✓
@@ -651,8 +629,6 @@ def rand_temporal_flip(x, param):
     (e.g. 'push' reversed ≠ 'push', so use carefully or only for symmetric gestures).
     """
     randf = torch.rand(x.size(0), device=x.device)
-    if param['batchmode']:
-        randf[:] = randf[0]
     # flip(1) reverses T; stack keeps gradient
     flipped = x.flip(1)
     mask = (randf < param['prob_temporal_flip'])[:, None, None, None]
@@ -669,8 +645,6 @@ def rand_temporal_cutout(x, param):
     cutout_len = max(1, int(T * param['ratio_temporal_cutout']))
     offset = torch.randint(0, T - cutout_len + 1,
                            size=[x.size(0)], device=x.device)
-    if param['batchmode']:
-        offset[:] = offset[0]
 
     mask = torch.ones(x.size(0), T, 1, 1, dtype=x.dtype, device=x.device)
     for i in range(x.size(0)):
@@ -689,8 +663,6 @@ def rand_amplitude(x, param):
     """
     scale = (torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device)
              * param['amplitude'] + (1.0 - param['amplitude'] / 2))
-    if param['batchmode']:
-        scale[:] = scale[0]
     return x * scale
 
 
