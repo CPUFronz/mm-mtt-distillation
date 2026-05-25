@@ -92,12 +92,7 @@ def main(args):
     data_save = []
 
     args.dsa_param = ParamDiffAug.copy()
-
     dsa_params = args.dsa_param
-    if args.zca:
-        zca_trans = args.zca_trans
-    else:
-        zca_trans = None
 
     wandb.init(
         sync_tensorboard=False,
@@ -113,7 +108,6 @@ def main(args):
         setattr(args, key, wandb.config._items[key])
 
     args.dsa_param = dsa_params
-    args.zca_trans = zca_trans
 
     # Keep a single artifact collection per run so each eval snapshot becomes a new version.
     eval_artifact_name = "distillation-eval-{}".format(wandb.run.id)
@@ -212,8 +206,6 @@ def main(args):
     criterion = nn.CrossEntropyLoss().to(args.device)
 
     expert_dir = os.path.join(args.buffer_path, args.dataset)
-    if args.dataset == "CIFAR10" and not args.zca:
-        expert_dir += "_NO_ZCA"
     expert_dir = os.path.join(expert_dir, args.model)
     print("Expert Dir: {}".format(expert_dir))
 
@@ -339,23 +331,7 @@ def main(args):
                 wandb.log({"Synthetic_Images": wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
                 wandb.log({'Synthetic_Pixels': wandb.Histogram(torch.nan_to_num(image_save.detach().cpu()))}, step=it)
 
-                log_eval_img(image_save, 'Clipped_Synthetic_Images', it)
-                
-                if args.zca:
-                    image_save = image_save.cpu()
-                    image_save = args.zca_trans.inverse_transform(image_save)
-
-                    zca_path = os.path.join(save_dir, "images_zca_{}.pt".format(it))
-                    torch.save(image_save.cpu(), zca_path)
-                    artifact_files.append(zca_path)
-
-                    upsampled = get_loggable_images(image_save)
-                    grid = torchvision.utils.make_grid(upsampled, nrow=10, normalize=True, scale_each=True)
-                    wandb.log({"Synthetic+ZCA-Inverted_Images": wandb.Image(torch.nan_to_num(grid.detach().cpu()))}, step=it)
-                    wandb.log({'Synthetic+ZCA-Inverted_Pixels': wandb.Histogram(torch.nan_to_num(image_save.detach().cpu()))}, step=it)
-
-                    log_eval_img(image_save, 'Clipped_Synthetic+ZCA-Inverted_Images', it)
-                    
+                log_eval_img(image_save, 'Clipped_Synthetic_Images', it)                    
 
                 if args.unimodal != 'model':
                     sensor_save = sensor_tensor.numpy()

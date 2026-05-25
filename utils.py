@@ -8,7 +8,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import os
-import kornia as K
 import tqdm
 from torch.utils.data import Dataset
 from torchvision import datasets, transforms
@@ -27,10 +26,7 @@ def get_dataset(args):
         num_classes = 10
         mean = [0.4914, 0.4822, 0.4465]
         std = [0.2023, 0.1994, 0.2010]
-        if args.zca:
-            transform = transforms.Compose([transforms.ToTensor()])
-        else:
-            transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=mean, std=std)])
+        transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=mean, std=std)])
         dst_train = datasets.CIFAR10(args.data_path, train=True, download=True, transform=transform) # no augmentation
         dst_test = datasets.CIFAR10(args.data_path, train=False, download=True, transform=transform)
         class_names = dst_train.classes
@@ -46,20 +42,20 @@ def get_dataset(args):
         scaler = StandardScaler()
         scaler.fit(df[args.sens_cols])
 
+        channel = 3
+        im_size = args.image_size
+        mean = [0.5087, 0.4848, 0.4292]
+        std = [0.1729, 0.1907, 0.2188]
                                                                                 
         train_data, test_data = train_test_split(df, test_size=args.test_split, random_state=args.seed)
-        dst_train = RaspiCarDataset(train_data, scaler, args.sens_cols, args.image_size, args.unimodal)
-        dst_test = RaspiCarDataset(test_data, scaler, args.sens_cols, args.image_size, args.unimodal)
+        dst_train = RaspiCarDataset(train_data, scaler, args.sens_cols, args.image_size, args.unimodal, mean=mean, std=std)
+        dst_test = RaspiCarDataset(test_data, scaler, args.sens_cols, args.image_size, args.unimodal, mean=mean, std=std)
 
         args.n_sensors = len(SENS_COLS_CAR)
         args.n_sensor_features = 9 # 9 = 1 sensor value + 8 statistical sensor features
         args.n_input_features = args.n_sensors * args.n_sensor_features
         args.n_output_features = NUM_STEERING_ANGLES
 
-        channel = 3
-        im_size = args.image_size
-        mean = [0.5087, 0.4848, 0.4292]
-        std = [0.1729, 0.1907, 0.2188]
         num_classes = NUM_STEERING_ANGLES
         class_names = [str(i) for i in range(num_classes)]
         class_map = {x: x for x in range(num_classes)}
@@ -150,55 +146,6 @@ def get_dataset(args):
 
     else:
         exit(f'unknown dataset: {args.dataset}')
-
-    if args.zca:
-        images = []
-        sensors = []
-        labels = []
-        print("Train ZCA")
-        for i in tqdm.tqdm(range(len(dst_train))):
-            if args.unimodal == 'model':
-                im, lab = dst_train[i]
-            else:
-                (im, sen), lab = dst_train[i]
-                sensors.append(sen)
-            images.append(im)
-            labels.append(lab)
-        images = torch.stack(images, dim=0).to('cpu')
-        sensors = torch.stack(sensors, dim=0).to('cpu') if sensors else torch.tensor([])
-        labels = torch.tensor(labels, dtype=torch.long).to('cpu')
-        zca = K.enhance.ZCAWhitening(eps=0.1, compute_inv=True)
-        zca.fit(images)
-        zca_images = zca(images).to('cpu')
-        if args.unimodal == 'model':
-            dst_train = TensorDataset(zca_images, labels)
-        else:
-            dst_train = MultimodalTensorDataset(zca_images, sensors, labels)
-
-        images = []
-        labels = []
-        sensors = []
-        print("Test ZCA")
-        for i in tqdm.tqdm(range(len(dst_test))):
-            if args.unimodal == 'model':
-                im, lab = dst_test[i]
-            else:
-                (im, sen), lab = dst_test[i]
-                sensors.append(sen)
-            images.append(im)
-            labels.append(lab)
-        images = torch.stack(images, dim=0).to('cpu')
-        sensors = torch.stack(sensors, dim=0).to('cpu') if sensors else torch.tensor([])
-        labels = torch.tensor(labels, dtype=torch.long).to('cpu')
-
-        zca_images = zca(images).to('cpu')
-        if args.unimodal == 'model':
-            dst_test = TensorDataset(zca_images, labels)
-        else:
-            dst_test = MultimodalTensorDataset(zca_images, sensors, labels)
-            dst_test.scaler = scaler
-
-        args.zca_trans = zca
 
     testloader = torch.utils.data.DataLoader(dst_test, batch_size=128, shuffle=False, num_workers=2)
 
@@ -838,7 +785,6 @@ def parse_args(mode):
     parser.add_argument('--dsa_strategy', type=str, default='color_crop_cutout_flip_scale_rotate', help='differentiable Siamese augmentation strategy')
     parser.add_argument('--data_path', type=str, default='data', help='dataset path')
     parser.add_argument('--buffer_path', type=str, default='./buffers', help='buffer path')
-    parser.add_argument('--zca', action='store_true', help="do ZCA whitening")
     parser.add_argument('--seed', type=int, default=42, help='set random seed')
     parser.add_argument('--unimodal', type=str, default='', choices=['', 'image', 'sensor'], help='unimodal training (only for multimodal datasets)')
     parser.add_argument('--n_groups', type=int, default=8, help='group norm groups (for MMSConvB)')
@@ -940,17 +886,19 @@ def load_raspicar_data(args, root='./data/raspicar/'):
 
 
 class RaspiCarDataset(Dataset):
-    def __init__(self, df, scaler, sens_cols, image_size=(64, 64), unimodal=''):
+    def __init__(self, df, scaler, sens_cols, image_size=(64, 64), mean=[0, 0, 0], std=[1, 1, 1], unimodal=''):
         self.dataset = df
         self.n_classes = NUM_STEERING_ANGLES
 
         self.scaler = scaler
         self.sensor_data_scaled = self.scaler.transform(self.dataset[sens_cols])
 
-        self.image_size = image_size
+        self.image_size = image_size        
         self.transform = transforms.Compose([
-            transforms.Resize(self.image_size),
-            transforms.ToTensor()
+                transforms.Resize(self.image_size),
+                transforms.normalize(mean=mean, std=std),
+                transforms.ToTensor()
+
         ])
         self.unimodal = unimodal
 
