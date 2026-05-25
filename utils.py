@@ -44,12 +44,13 @@ def get_dataset(args):
 
         channel = 3
         im_size = args.image_size
+        # mean and std are in for all added datasets, but not used
         mean = [0.5087, 0.4848, 0.4292]
         std = [0.1729, 0.1907, 0.2188]
                                                                                 
         train_data, test_data = train_test_split(df, test_size=args.test_split, random_state=args.seed)
-        dst_train = RaspiCarDataset(train_data, scaler, args.sens_cols, args.image_size, args.unimodal, mean=mean, std=std)
-        dst_test = RaspiCarDataset(test_data, scaler, args.sens_cols, args.image_size, args.unimodal, mean=mean, std=std)
+        dst_train = RaspiCarDataset(train_data, scaler, args.sens_cols, args.image_size, args.unimodal)
+        dst_test = RaspiCarDataset(test_data, scaler, args.sens_cols, args.image_size, args.unimodal)
 
         args.n_sensors = len(SENS_COLS_CAR)
         args.n_sensor_features = 9 # 9 = 1 sensor value + 8 statistical sensor features
@@ -886,7 +887,7 @@ def load_raspicar_data(args, root='./data/raspicar/'):
 
 
 class RaspiCarDataset(Dataset):
-    def __init__(self, df, scaler, sens_cols, image_size=(64, 64), mean=[0, 0, 0], std=[1, 1, 1], unimodal=''):
+    def __init__(self, df, scaler, sens_cols, image_size=(64, 64), unimodal=''):
         self.dataset = df
         self.n_classes = NUM_STEERING_ANGLES
 
@@ -896,7 +897,6 @@ class RaspiCarDataset(Dataset):
         self.image_size = image_size        
         self.transform = transforms.Compose([
                 transforms.Resize(self.image_size),
-                transforms.normalize(mean=mean, std=std),
                 transforms.ToTensor()
 
         ])
