@@ -328,7 +328,7 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug):
 
         if aug:
             if args.dsa:
-                img = DiffAugment(img, args.dsa_strategy, param=args.dsa_param, aug_chance=args.aug_chance)
+                img = DiffAugment(img, args.dsa_strategy, param=args.dsa_param)
 
         n_b = lab.shape[0]
 
@@ -464,7 +464,7 @@ ParamDiffAug = {  # shadi version 21 April
 }
 
 
-def DiffAugment(x, strategy='', param=None, aug_chance=0.5):
+def DiffAugment(x, strategy='', param=None):
     """
     Differentiable augmentation for BVP data.
 
@@ -473,7 +473,6 @@ def DiffAugment(x, strategy='', param=None, aug_chance=0.5):
         strategy : '-'-separated aug names, e.g. 'flip_h-noise-temporal_shift-scale'
                    Use '|' NOT '_' as separator (aug names contain underscores).
         param    : ParamDiffAug dict
-        aug_chance : Probability of applying each augmentation
 
     Returns:
         Augmented tensor [B, T, H, W]
@@ -490,11 +489,10 @@ def DiffAugment(x, strategy='', param=None, aug_chance=0.5):
                 for f in AUGMENT_FNS[p]:
                     x = f(x, param)
     elif param['aug_mode'] == 'S':  # pick one aug randomly
-        if random.random() < aug_chance:
-            p = augs[torch.randint(0, len(augs), size=(1,)).item()]
-            if p in AUGMENT_FNS:
-                for f in AUGMENT_FNS[p]:
-                    x = f(x, param)
+        p = augs[torch.randint(0, len(augs), size=(1,)).item()]
+        if p in AUGMENT_FNS:
+            for f in AUGMENT_FNS[p]:
+                x = f(x, param)
 
     return x.contiguous()
 
@@ -763,7 +761,6 @@ def parse_args(mode):
     parser.add_argument('--n_groups', type=int, default=8, help='group norm groups (for MMSConvB)')
     parser.add_argument('--name', type=str, default='Run', help='name of wandb run')
     parser.add_argument('--optimizer', type=str, default='SGD', choices=["SGD", "Adam"], help='Optimizer to use for evaluation training. Overrides the optimizer choice from the distill run config if specified.')
-    parser.add_argument('--aug_chance', type=float, default=0.5, help='Override the augmentation chance for evaluation training. Defaults to 0.5 if DSA is enabled and no value is specified.')
 
     if mode == "buffer":
         parser.add_argument('--num_experts', type=int, default=100, help='training iterations')
