@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.utils
 from tqdm import tqdm
-from utils import get_dataset, get_network, get_eval_pool, evaluate_synset, DiffAugment, ParamDiffAug, parse_args
+from utils import get_dataset, get_network, get_eval_pool, evaluate_synset, parse_args, DiffAugment
 import wandb
 import copy
 import random
@@ -71,7 +71,6 @@ def main(args):
 
     print("CUDNN STATUS: {}".format(torch.backends.cudnn.enabled))
 
-    args.dsa = True if args.dsa == 'True' else False
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     if args.model not in ['MMSConvB', 'Perceiver']:
@@ -81,18 +80,13 @@ def main(args):
     channel, im_size, num_classes, _, _, _, dst_train, dst_test, testloader, class_map = get_dataset(args)
     model_eval_pool = get_eval_pool(args.eval_mode, args.model, args.model)
 
-    im_res = im_size[0]
-
     args.im_size = im_size
+    if args.augmentations:
+        augs = DiffAugment(args.augmentations)
 
     accs_all_exps = dict() # record performances of all experiments
     for key in model_eval_pool:
         accs_all_exps[key] = []
-
-    data_save = []
-
-    args.dsa_param = ParamDiffAug.copy()
-    dsa_params = args.dsa_param
 
     wandb.init(
         sync_tensorboard=False,
@@ -106,8 +100,6 @@ def main(args):
 
     for key in wandb.config._items:
         setattr(args, key, wandb.config._items[key])
-
-    args.dsa_param = dsa_params
 
     # Keep a single artifact collection per run so each eval snapshot becomes a new version.
     eval_artifact_name = "distillation-eval-{}".format(wandb.run.id)
@@ -255,9 +247,8 @@ def main(args):
         if it in eval_it_pool:
             for model_eval in model_eval_pool:
                 print('-------------------------\nEvaluation\nmodel_train = %s, model_eval = %s, iteration = %d'%(args.model, model_eval, it))
-                if args.dsa:
-                    print('DSA augmentation strategy: \n', args.dsa_strategy)
-                    print('DSA augmentation parameters: \n', args.dsa_param)
+                if args.augmentations:
+                    print('Augmentations:\n', args.augmentations)
 
                 accs_test = []
                 accs_train = []
@@ -403,8 +394,8 @@ def main(args):
             x = syn_images[these_indices]
             this_y = y_hat[these_indices]
 
-            if args.dsa and args.aug_chance > 0:
-                x = DiffAugment(x, args.dsa_strategy, param=args.dsa_param, aug_chance=args.aug_chance)
+            if args.augmentations:
+                x = augs(x)
 
             if args.unimodal != 'model':
                 x = (x, syn_sensor[these_indices])

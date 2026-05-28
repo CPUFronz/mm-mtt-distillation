@@ -2,7 +2,7 @@ import os
 import torch
 import torch.nn as nn
 from tqdm import tqdm
-from utils import get_dataset, get_network, TensorDataset, epoch, ParamDiffAug, parse_args
+from utils import get_dataset, get_network, TensorDataset, epoch, parse_args, DiffAugment
 import copy
 
 
@@ -16,9 +16,10 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 def main(args, trial=None):
     fix_seed(args.seed)
 
-    args.dsa = True if args.dsa == 'True' else False
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    args.dsa_param = ParamDiffAug.copy()
+
+    aug = DiffAugment(args.augmentations)
+
 
     if args.model not in ['MMSConvB', 'Perceiver']:
         args.unimodal = 'model'
@@ -110,11 +111,8 @@ def main(args, trial=None):
 
             for e in range(args.train_epochs):
 
-                train_loss, train_acc = epoch("train", dataloader=trainloader, net=teacher_net, optimizer=teacher_optim,
-                                            criterion=criterion, args=args, aug=True)
-
-                test_loss, test_acc = epoch("test", dataloader=testloader, net=teacher_net, optimizer=None,
-                                            criterion=criterion, args=args, aug=False)
+                train_loss, train_acc = epoch("train", dataloader=trainloader, net=teacher_net, optimizer=teacher_optim, criterion=criterion, args=args, aug=aug)
+                test_loss, test_acc = epoch("test", dataloader=testloader, net=teacher_net, optimizer=None, criterion=criterion, args=args, aug=False)
 
                 print("Itr: {}\tEpoch: {}\tTrain Acc: {}\tTest Acc: {}".format(it, e, train_acc, test_acc))
 
