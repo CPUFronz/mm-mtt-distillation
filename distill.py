@@ -195,6 +195,13 @@ def main(args):
         sensor_syn = sensor_syn.detach().to(args.device).requires_grad_(True)
         optimizer_sens = torch.optim.SGD([sensor_syn], lr=args.lr_img, momentum=0.5)
 
+    optimizers = []
+    if args.unimodal != 'sensor':
+        optimizers.append(optimizer_img)
+    if args.unimodal != 'model' and args.unimodal != 'image':
+        optimizers.append(optimizer_sens)
+    optimizers.append(optimizer_lr)
+
     criterion = nn.CrossEntropyLoss().to(args.device)
 
     expert_dir = os.path.join(args.buffer_path, args.dataset)
@@ -342,8 +349,6 @@ def main(args):
 
         student_net.train()
 
-        num_params = sum([np.prod(p.size()) for p in (student_net.parameters())])
-
         if args.load_all:
             expert_trajectory = buffer[np.random.randint(0, len(buffer))]
         else:
@@ -379,8 +384,6 @@ def main(args):
 
         y_hat = label_syn.to(args.device)
 
-        param_loss_list = []
-        param_dist_list = []
         indices_chunks = []
 
         for step in range(args.syn_steps):
@@ -411,33 +414,17 @@ def main(args):
 
             student_params.append(student_params[-1] - syn_lr * grad)
 
+        param_loss = F.mse_loss(student_params[-1], target_params, reduction="sum")
+        param_dist = F.mse_loss(starting_params, target_params, reduction="sum")
+        grand_loss = param_loss / param_dist
 
-        param_loss = torch.tensor(0.0).to(args.device)
-        param_dist = torch.tensor(0.0).to(args.device)
-
-        param_loss += torch.nn.functional.mse_loss(student_params[-1], target_params, reduction="sum")
-        param_dist += torch.nn.functional.mse_loss(starting_params, target_params, reduction="sum")
-
-        param_loss_list.append(param_loss)
-        param_dist_list.append(param_dist)
-
-
-        param_loss /= num_params
-        param_dist /= num_params
-
-        param_loss /= param_dist
-
-        grand_loss = param_loss
-
-        optimizer_img.zero_grad()  if args.unimodal != 'sensor' else None
-        optimizer_sens.zero_grad() if args.unimodal != 'model' and args.unimodal != 'image' else None
-        optimizer_lr.zero_grad()
+        for optimizer in optimizers:
+            optimizer.zero_grad()
 
         grand_loss.backward()
 
-        optimizer_img.step()  if args.unimodal != 'sensor' else None
-        optimizer_sens.step() if args.unimodal != 'model' and args.unimodal != 'image' else None
-        optimizer_lr.step()
+        for optimizer in optimizers:
+            optimizer.step()
 
         wandb.log({"Grand_Loss": grand_loss.detach().cpu(),
                    "Start_Epoch": start_epoch})
