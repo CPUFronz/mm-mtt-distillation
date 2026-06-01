@@ -444,7 +444,6 @@ def get_eval_pool(eval_mode, model, model_eval):
         model_eval_pool = [model_eval]
     return model_eval_pool
 
-# TODO: add old Augmentations for Images
 
 #####################################################################
 # added by Shadi and Franz
@@ -464,43 +463,48 @@ class DiffAugment:
             'temporal_cutout_ratio':    self.rand_temporal_cutout,
             'temporal_flip_prob':       self.rand_temporal_flip,
             'amplitude':                self.rand_amplitude,
-            'noise':                    self.rand_noise
+            'noise':                    self.rand_noise,
+            'image_rotate':             self.rand_image_rotate,
+            'image_brightness':         self.rand_brightness,
+            'image_saturation':         self.rand_saturation,
+            'image_contrast':           self.rand_contrast,
+            # those image augmentations are already implemented, just with a different name
+            'image_scale':              self.rand_scale_velocity,
+            'image_crop':               self.rand_translate_velocity,
+            'image_cutout':             self.rand_cutout_velocity,
         }
 
     def __call__(self, x):
         augmentation = np.random.choice(list(self.param.keys()))
-        x = self.registry[augmentation](x)
+        x = self.registry[augmentation](x, self.param[augmentation])
         return x.contiguous()
 
-    def rand_flip_h(self, x):
+    def rand_flip_h(self, x, prob_flip_h):
         """
         Flip x-velocity axis (H, dim=2).
         Physical meaning: mirrors the gesture left ↔ right.
         ⚠ Skip if 'slide_left' and 'slide_right' are different class labels.
         """
-        prob_flip_h = self.param['flip_h_prob']  
         randf = torch.rand(x.size(0), 1, 1, 1, device=x.device)
         return torch.where(randf < prob_flip_h, x.flip(2), x)
 
 
-    def rand_flip_w(self, x):
+    def rand_flip_w(self, x, prob_flip_w):
         """
         Flip y-velocity axis (W, dim=3).
         Physical meaning: mirrors the gesture forward ↔ backward.
         """
-        prob_flip_w = self.param['flip_w_prob']
         randf = torch.rand(x.size(0), 1, 1, 1, device=x.device)
         return torch.where(randf < prob_flip_w, x.flip(3), x)
 
 
-    def rand_scale_velocity(self,x):
+    def rand_scale_velocity(self,x, ratio):
         """
         Scale velocity bins via affine grid (H, W).
         Physical meaning: simulates different body-to-antenna distances
         (further away → compressed velocity distribution).
         Note: affine_grid treats T as 'channels' and scales H,W identically ✓
         """
-        ratio = self.param['velocity_scale_ratio']
         sx = torch.rand(x.shape[0]) * (ratio - 1.0 / ratio) + 1.0 / ratio
         sy = torch.rand(x.shape[0]) * (ratio - 1.0 / ratio) + 1.0 / ratio
         theta = [[[sx[i], 0,    0],
@@ -510,12 +514,11 @@ class DiffAugment:
         return F.grid_sample(x, grid, align_corners=True)
     
 
-    def rand_translate_velocity(self, x):
+    def rand_translate_velocity(self, x, ratio):
         """
         Translate in velocity space (H, W) with wrap-around padding.
         Physical meaning: slightly different body orientation relative to antennas.
         """
-        ratio = self.param['velocity_translate_ratio']
         shift_h  = int(x.size(2) * ratio + 0.5)
         shift_w  = int(x.size(3) * ratio + 0.5)
         trans_h = torch.randint(-shift_h, shift_h + 1, size=[x.size(0), 1, 1], device=x.device)
@@ -536,12 +539,11 @@ class DiffAugment:
         return x
     
 
-    def rand_cutout_velocity(self, x):
+    def rand_cutout_velocity(self, x, ratio_cutout):
         """
         Zero out a rectangular patch in velocity space (H, W) for all T frames.
         Physical meaning: simulates partial antenna occlusion or dead velocity bins.
         """
-        ratio_cutout = self.param['velocity_cutout_ratio']
         cutout_h = int(x.size(2) * ratio_cutout + 0.5)
         cutout_w = int(x.size(3) * ratio_cutout + 0.5)
         off_h = torch.randint(0, x.size(2) + (1 - cutout_h % 2),
@@ -566,14 +568,12 @@ class DiffAugment:
     #  TEMPORAL AUGMENTATIONS  (operate on T=dim1)
     # ─────────────────────────────────────────────────────────────────────────────
 
-    def rand_temporal_shift(self, x):
+    def rand_temporal_shift(self, x, max_temporal_shift):
         """
         Key insight: reshape T to the spatial WIDTH dimension,
         then affine_grid + grid_sample gives continuous bilinear shift along T.
         Gradient flows smoothly back to x_syn through interpolated frames. ✓
         """
-        max_temporal_shift = self.param['temporal_shift_max']
-
         B, T, H, W = x.shape
 
         # Normalized continuous shift in [-1, 1] space
@@ -602,13 +602,12 @@ class DiffAugment:
         return x_shifted.reshape(B, H, W, T).permute(0, 3, 1, 2)
 
 
-    def rand_temporal_flip(self, x):
+    def rand_temporal_flip(self, x, prob_temporal_flip):
         """
         Reverse the T axis (time-reverse the gesture).
         Physical meaning: reversed motion — only valid if class label is symmetric
         (e.g. 'push' reversed ≠ 'push', so use carefully or only for symmetric gestures).
         """
-        prob_temporal_flip = self.param['temporal_flip_prob']
         randf = torch.rand(x.size(0), device=x.device)
         # flip(1) reverses T; stack keeps gradient
         flipped = x.flip(1)
@@ -616,14 +615,12 @@ class DiffAugment:
         return torch.where(mask, flipped, x)
 
 
-    def rand_temporal_cutout(self, x):
+    def rand_temporal_cutout(self, x, ratio_temporal_cutout):
         """
         Zero out a contiguous block of T frames.
         Physical meaning: missing CSI packets / person momentarily still.
         x.clone() ensures gradient flows through non-zeroed frames.
         """
-        ratio_temporal_cutout = self.param['temporal_cutout_ratio']
-
         T          = x.size(1)
         cutout_len = max(1, int(T * ratio_temporal_cutout))
         offset = torch.randint(0, T - cutout_len + 1,
@@ -639,24 +636,55 @@ class DiffAugment:
     #  AMPLITUDE AUGMENTATIONS  (operate on all dims)
     # ─────────────────────────────────────────────────────────────────────────────
 
-    def rand_amplitude(self, x):
+    def rand_amplitude(self, x, amplitude):
         """
         Multiply entire BVP map by a per-sample random scalar.
         Physical meaning: signal strength variation due to distance / environment.
         """
-        amplitude = self.param['amplitude']
         scale = (torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device)
                 * amplitude + (1.0 - amplitude / 2))
         return x * scale
 
 
-    def rand_noise(self, x):
+    def rand_noise(self, x, noise):
         """
         Add per-sample Gaussian noise.
         Physical meaning: multipath interference and thermal noise in CSI.
         """
-        noise = self.param['noise']
         return x + noise * torch.randn_like(x)
+
+    # ─────────────────────────────────────────────────────────────────────────────
+    #  IMAGE AUGMENTATIONS
+    # ─────────────────────────────────────────────────────────────────────────────
+
+    def rand_image_rotate(self, x, ratio): # [-180, 180], 90: anticlockwise 90 degree
+        theta = (torch.rand(x.shape[0]) - 0.5) * 2 * ratio / 180 * float(np.pi)
+        theta = [[[torch.cos(theta[i]), torch.sin(-theta[i]), 0],
+            [torch.sin(theta[i]), torch.cos(theta[i]),  0],]  for i in range(x.shape[0])]
+        theta = torch.tensor(theta, dtype=torch.float)
+        grid = F.affine_grid(theta, x.shape, align_corners=True).to(x.device)
+        x = F.grid_sample(x, grid, align_corners=True)
+        return x
+
+    
+    def rand_brightness(self, x, ratio):
+        randb = torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device)
+        x = x + (randb - 0.5)*ratio
+        return x
+    
+
+    def rand_saturation(self, x, ratio):
+        x_mean = x.mean(dim=1, keepdim=True)
+        rands = torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device)
+        x = (x - x_mean) * (rands * ratio) + x_mean
+        return x
+    
+
+    def rand_contrast(self, x, ratio):
+        x_mean = x.mean(dim=[1, 2, 3], keepdim=True)
+        randc = torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device)
+        x = (x - x_mean) * (randc + ratio) + x_mean
+        return x
 
 
 #####################################################################
@@ -697,13 +725,18 @@ AUG_DEFAULTS = {
     'velocity_scale_ratio': 1.1,       # velocity bin scaling ratio
     'velocity_translate_ratio': 0.125, # velocity-space translation ratio
     'velocity_cutout_ratio': 0.5,      # velocity-space cutout size (fraction of H,W)
-    # Temporal (T) params
+    # Temporal params
     'temporal_shift_max': 4,           # max frames to roll +/- along T
     'temporal_cutout_ratio': 0.05,     # fraction of T frames to zero out
     'temporal_flip_prob': 0.5,         # P(reverse time axis)
     # Amplitude params
     'amplitude': 0.3,                  # uniform scale in [1 - amp/2, 1 + amp/2]
-    'noise': 0.03,                     # Gaussian noise std
+    'noise': 0.03,                     # Gaussian noise std,
+    # Image params
+    'image_rotate': 15.0,              # rotation ratio for image augmentations
+    'image_brightness': 1.0,           # brightness ratio for image augmentations
+    'image_saturation': 2.0,           # saturation ratio for image augmentations
+    'image_contrast': 0.5              # contrast ratio for image augmentations
 }
 
 
