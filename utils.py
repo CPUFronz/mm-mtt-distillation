@@ -790,7 +790,7 @@ def parse_args(mode):
     parser = argparse.ArgumentParser(description='Parameter Processing')
     parser.add_argument('--dataset', type=str, default='CIFAR10', help='dataset')
     parser.add_argument('--model', type=str, default='ConvNet', help='model')
-    parser.add_argument('--lr_teacher', type=float, default=0.01, help='learning rate for updating network parameters' if mode == 'buffer' else 'initialization for synthetic learning rate')
+    parser.add_argument('--lr', type=float, default=0.01, help='learning rate for updating network parameters' if mode == 'buffer' else 'initialization for synthetic learning rate')
     parser.add_argument('--batch_size', type=int, default=256, help='batch size for training networks')
     parser.add_argument('--augmentations', type=parse_augmentations, default=AUG_DEFAULTS.copy(), metavar='JSON', help='JSON object with augmentation parameters, e.g. \'{"noise": 0.03}\'. Use "{}" or "none" to disable.')
     parser.add_argument('--data_path', type=str, default='data', help='dataset path')

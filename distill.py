@@ -160,7 +160,7 @@ def main(args):
         else:
             sensor_syn = torch.zeros(size=(num_classes * args.ipc, *sensor_shape), dtype=torch.float) # initialize with 0 for image-only
 
-    syn_lr = torch.tensor(args.lr_teacher).to(args.device)
+    syn_lr = torch.tensor(args.lr).to(args.device)
 
     if args.data_init == 'real':
         print('initialize synthetic data from random real images')

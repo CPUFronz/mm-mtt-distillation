@@ -99,7 +99,7 @@ def main(args, trial=None):
             ''' Train synthetic data '''
             teacher_net = get_network(args.model, channel, num_classes, im_size, **kwargs).to(args.device) # get a random model
             teacher_net.train()
-            lr = args.lr_teacher
+            lr = args.lr
             teacher_optim = torch.optim.SGD(teacher_net.parameters(), lr=lr, momentum=args.mom, weight_decay=args.l2)  # optimizer_img for synthetic data
             teacher_optim.zero_grad()
 
@@ -165,7 +165,7 @@ if __name__ == '__main__':
             trial_args = copy.deepcopy(args)
             trial_args.batch_size = trial.suggest_categorical('batch_size', [64, 128, 256, 512])
             trial_args.train_epochs = trial.suggest_categorical('epochs', [50, 100])
-            trial_args.lr_teacher = trial.suggest_float('lr', 1e-7, 5e-1, log=True)
+            trial_args.lr = trial.suggest_float('lr', 1e-7, 5e-1, log=True)
             return main(trial_args, trial)
 
         storage = f"sqlite:///optuna_results.db"
