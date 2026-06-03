@@ -106,7 +106,7 @@ def main(args):
     wandb.run.summary["eval_artifact_collection"] = eval_artifact_name
 
     if args.batch_syn is None:
-        args.batch_syn = num_classes * args.ipc
+        args.batch_syn = num_classes * args.spc
 
     args.distributed = torch.cuda.device_count() > 1
 
@@ -150,15 +150,15 @@ def main(args):
 
 
     ''' initialize the synthetic data '''
-    label_syn = torch.tensor([np.ones(args.ipc,dtype=np.int_)*i for i in range(num_classes)], dtype=torch.long, requires_grad=False, device=args.device).view(-1) # [0,0,0, 1,1,1, ..., 9,9,9]
-    image_syn = torch.randn(size=(num_classes * args.ipc, channel, im_size[0], im_size[1]), dtype=torch.float)
+    label_syn = torch.tensor([np.ones(args.spc,dtype=np.int_)*i for i in range(num_classes)], dtype=torch.long, requires_grad=False, device=args.device).view(-1) # [0,0,0, 1,1,1, ..., 9,9,9]
+    image_syn = torch.randn(size=(num_classes * args.spc, channel, im_size[0], im_size[1]), dtype=torch.float)
 
     if args.unimodal != 'model':
         sensor_shape = sensor_all.shape[1:] if sensor_all.numel() > 0 else (args.n_input_features,)
         if args.unimodal != 'image':
-            sensor_syn = torch.randn(size=(num_classes * args.ipc, *sensor_shape), dtype=torch.float)
+            sensor_syn = torch.randn(size=(num_classes * args.spc, *sensor_shape), dtype=torch.float)
         else:
-            sensor_syn = torch.zeros(size=(num_classes * args.ipc, *sensor_shape), dtype=torch.float) # initialize with 0 for image-only
+            sensor_syn = torch.zeros(size=(num_classes * args.spc, *sensor_shape), dtype=torch.float) # initialize with 0 for image-only
 
     syn_lr = torch.tensor(args.lr).to(args.device)
 
@@ -168,15 +168,15 @@ def main(args):
             print('initialize synthetic sensor data from random real sensor data')
         with torch.no_grad():
             for c in range(num_classes):
-                class_slice = slice(c * args.ipc, (c + 1) * args.ipc)
-                class_indices = np.random.permutation(indices_class[c])[:args.ipc]
+                class_slice = slice(c * args.spc, (c + 1) * args.spc)
+                class_indices = np.random.permutation(indices_class[c])[:args.spc]
                 image_syn[class_slice] = images_all[class_indices]
                 if args.unimodal != 'model' and args.unimodal != 'image':
                     sensor_syn[class_slice] = sensor_all[class_indices]
 
             if args.unimodal != 'model' and args.unimodal != 'image':
                 for c in range(num_classes):
-                    class_slice = slice(c * args.ipc, (c + 1) * args.ipc)
+                    class_slice = slice(c * args.spc, (c + 1) * args.spc)
                     sensor_syn[class_slice] = sensor_all[class_indices]
     else:
         print('initialize synthetic data from random noise')
