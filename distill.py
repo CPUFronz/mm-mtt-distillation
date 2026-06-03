@@ -76,7 +76,7 @@ def main(args):
     if args.model not in ['MMSConvB', 'Perceiver']:
         args.unimodal = 'model'
 
-    eval_it_pool = np.arange(0, args.Iteration + 1, args.eval_it).tolist()
+    eval_it_pool = np.arange(0, args.distill_steps + 1, args.eval_it).tolist()
     channel, im_size, num_classes, _, _, _, dst_train, dst_test, testloader, class_map = get_dataset(args)
     model_eval_pool = get_eval_pool(args.eval_mode, args.model, args.model)
 
@@ -239,7 +239,7 @@ def main(args):
     best_acc = {m: 0 for m in model_eval_pool}
     best_std = {m: 0 for m in model_eval_pool}
     
-    for it in range(0, args.Iteration+1):
+    for it in range(0, args.distill_steps+1):
         is_best = False
 
         kwargs = {
