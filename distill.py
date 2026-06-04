@@ -278,7 +278,7 @@ def main(args):
                     else:
                         sensor_syn_eval = None
 
-                    args.lr_net = syn_lr.item()
+                    args.lr_net_syn = syn_lr.item()
                     _, acc_train, acc_test = evaluate_synset(it_eval, net_eval, image_syn_eval, label_syn_eval, testloader, args, sensor_train=sensor_syn_eval)
                     accs_test.append(acc_test)
                     accs_train.append(acc_train)
