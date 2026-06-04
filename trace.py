@@ -1,467 +1,128 @@
-# TODO: This file is still work in progress. My next steps would be to 
-#        - add augmentations, to see how they influence the training
-#        - add computation of traces, similar to Yang, William, et al. "What is dataset distillation learning?." arXiv preprint arXiv:2406.04284 (2024).
-
-import argparse
 import os
+import argparse
 from pathlib import Path
 from types import SimpleNamespace
+from glob import glob
 
 import torch
-import torch.nn as nn
 import wandb
-from torch.utils.data import DataLoader
 
-from utils import (
-    MultimodalTensorDataset,
-    ParamDiffAug,
-    TensorDataset,
-    epoch,
-    fix_seed,
-    get_daparam,
-    get_dataset,
-    get_network
-)
+from utils import evaluate_synset, fix_seed, get_dataset, get_network
+
+WANDB_PREFIX = 'eml-tugraz'
 
 
-MULTIMODAL_MODELS = {"MMSConvB", "Perceiver"}
-WANDB_PROJECT = "SyntheticTraining"
-DEFAULT_MOMENTUM = 0
-DEFAULT_WEIGHT_DECAY = 0
-TRACE_LR_SCHEDULE = (
-    {"until_epoch": 500, "lr": 0.010074},
-    {"until_epoch": 1000, "lr": 0.010074 / 10},
-)
-
-
-def normalize_bool(value):
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.lower() in {"1", "true", "yes", "y"}
-    return bool(value)
-
-
-def prepare_wandb_value(value):
-    if isinstance(value, (int, float, str, bool)) or value is None:
-        return value
-    if isinstance(value, Path):
-        return str(value)
-    if isinstance(value, dict):
-        return {str(key): prepare_wandb_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [prepare_wandb_value(item) for item in value]
-    return str(value)
-
-
-def prepare_wandb_config(values):
-    return {str(key): prepare_wandb_value(value) for key, value in values.items()}
-
-
-def config_values_equal(left, right):
-    return prepare_wandb_value(left) == prepare_wandb_value(right)
-
-
-def add_override(overrides, key, original_value, override_value):
-    if config_values_equal(original_value, override_value):
-        return
-
-    overrides[key] = prepare_wandb_value(override_value)
-
-
-def merge_wandb_metadata(config, metadata, prefix="trace"):
-    for key, value in prepare_wandb_config(metadata).items():
-        target_key = key
-        if key in config and not config_values_equal(config[key], value):
-            target_key = "{}_{}".format(prefix, key)
-        config[target_key] = value
-
-
-def trace_lr_for_epoch(epoch):
-    for schedule_step in TRACE_LR_SCHEDULE:
-        until_epoch = schedule_step["until_epoch"]
-        if until_epoch is None or epoch <= until_epoch:
-            return float(schedule_step["lr"])
-
-    raise ValueError("No learning rate configured for epoch {}".format(epoch))
-
-
-def build_run_args(run_config):
-    defaults = {
-        "batch_real": 256,
-        "batch_train": 256,
-        "canvas_samples": 1,
-        "canvas_size": 2,
-        "data_path": "data",
-        "dataset": "CIFAR10",
-        "dsa": "True",
-        "dsa_strategy": "color_crop_cutout_flip_scale_rotate",
-        "epoch_eval_train": 1000,
-        "lr_teacher": 0.01,
-        "model": "ConvNet",
-        "n_groups": 8,
-        "res": 128,
-        "seed": 42,
-        "subset": "imagenette",
-        "texture": False,
-        "unimodal": "",
-        "zca": False,
-    }
-
-    merged = dict(defaults)
-    merged.update(dict(run_config))
-
-    args = SimpleNamespace(**merged)
-    args.dsa = normalize_bool(args.dsa)
-    args.texture = normalize_bool(getattr(args, "texture", False))
-    args.zca = normalize_bool(getattr(args, "zca", False))
-    args.unimodal = getattr(args, "unimodal", "")
-    args.n_groups = int(getattr(args, "n_groups", 8))
-    args.batch_real = int(getattr(args, "batch_real", 256))
-    args.batch_train = int(getattr(args, "batch_train", 256))
-    args.canvas_samples = int(getattr(args, "canvas_samples", 1))
-    args.canvas_size = int(getattr(args, "canvas_size", 2))
-    args.epoch_eval_train = int(getattr(args, "epoch_eval_train", 1000))
-    args.lr_teacher = float(getattr(args, "lr_teacher", 0.01))
-    args.seed = int(getattr(args, "seed", 42))
-    args.res = int(getattr(args, "res", 128))
-    args.dsa_param = ParamDiffAug.copy()
-    args.device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    if args.model not in MULTIMODAL_MODELS:
-        args.unimodal = "model"
-
-    return args
-
-
-def resolve_run(api, run_ref, entity=None, project="DatasetDistillation"):
-    if run_ref.count("/") == 2:
-        run_path = run_ref
-    elif run_ref.count("/") == 1:
-        resolved_entity = entity or getattr(api, "default_entity", None)
-        if resolved_entity is None:
-            raise ValueError(
-                "W&B entity could not be inferred. Pass --entity or use a full entity/project/run_id path."
-            )
-        run_path = "{}/{}".format(resolved_entity, run_ref)
-    else:
-        resolved_entity = entity or getattr(api, "default_entity", None)
-        if resolved_entity is None:
-            raise ValueError(
-                "W&B entity could not be inferred. Pass --entity or use a full entity/project/run_id path."
-            )
-        run_path = "{}/{}/{}".format(resolved_entity, project, run_ref)
-
-    return api.run(run_path), run_path
-
-
-def recover_synthetic_lr(run, iteration, fallback_lr):
-    if iteration is None:
-        return float(fallback_lr)
-
-    history_rows = None
-    try:
-        history_rows = run.scan_history(keys=["Synthetic_LR"], min_step=iteration, max_step=iteration + 1)
-    except TypeError:
-        history_rows = run.scan_history(keys=["Synthetic_LR"])
-    except Exception:
-        history_rows = None
-
-    if history_rows is not None:
-        for row in history_rows:
-            if row.get("_step") == iteration and row.get("Synthetic_LR") is not None:
-                return float(row["Synthetic_LR"])
-
-    return float(fallback_lr)
-
-
-def resolve_snapshot_file(root_dir, candidates, required=True):
-    for candidate in candidates:
-        path = Path(root_dir) / candidate
-        if path.exists():
-            return path
-
-    if required:
-        raise FileNotFoundError(
-            "Could not find any of the expected snapshot files: {}".format(", ".join(candidates))
-        )
-    return None
-
-
-def load_distillation_snapshot(api, run_path, run, requested_iteration, download_root):
-    entity, project, _ = run_path.split("/")
-    summary = dict(getattr(run, "summary", {}) or {})
-    collection = summary.get("eval_artifact_collection", "distillation-eval-{}".format(run.id))
-    alias = "best_so_far" if requested_iteration is None else "iter_{}".format(int(requested_iteration))
-    artifact_ref = "{}/{}/{}:{}".format(entity, project, collection, alias)
-
-    try:
-        artifact = api.artifact(artifact_ref)
-    except Exception as exc:
-        raise RuntimeError(
-            "Unable to load artifact '{}'. Make sure the requested iteration was saved by distill.py.".format(
-                artifact_ref
-            )
-        ) from exc
-
-    artifact_dir = Path(artifact.download(root=str(download_root)))
-    metadata = dict(getattr(artifact, "metadata", {}) or {})
-    selected_iteration = requested_iteration if requested_iteration is not None else metadata.get("iteration")
-
-    image_candidates = []
-    label_candidates = []
-    sensor_candidates = []
-
-    if selected_iteration is not None:
-        image_candidates.append("images_{}.pt".format(int(selected_iteration)))
-        label_candidates.append("labels_{}.pt".format(int(selected_iteration)))
-        sensor_candidates.append("sensor_{}.pt".format(int(selected_iteration)))
-
-    image_candidates.append("images_best.pt")
-    label_candidates.append("labels_best.pt")
-    sensor_candidates.append("sensor_best.pt")
-
-    image_path = resolve_snapshot_file(artifact_dir, image_candidates, required=True)
-    label_path = resolve_snapshot_file(artifact_dir, label_candidates, required=True)
-    sensor_path = resolve_snapshot_file(artifact_dir, sensor_candidates, required=False)
-
-    images = torch.load(image_path, map_location="cpu").float()
-    labels = torch.load(label_path, map_location="cpu").long()
-    sensors = None if sensor_path is None else torch.load(sensor_path, map_location="cpu").float()
-
-    if selected_iteration is None:
-        selected_iteration = metadata.get("iteration")
-
-    return {
-        "artifact_ref": artifact_ref,
-        "iteration": None if selected_iteration is None else int(selected_iteration),
-        "images": images,
-        "labels": labels,
-        "sensors": sensors,
-    }
-
-
-def build_model_kwargs(args):
-    return {
-        "unimodal": getattr(args, "unimodal", ""),
-        "n_groups": getattr(args, "n_groups", 8),
-        "n_sensors": getattr(args, "n_sensors", None),
-        "n_sensor_features": getattr(args, "n_sensor_features", None),
-    }
-
-
-def build_synthetic_dataset(images, labels, sensors=None):
-    if sensors is None:
-        return TensorDataset(images, labels)
-    return MultimodalTensorDataset(images, sensors, labels)
-
-
-def main(cli_args):
-    device = cli_args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    if device == "cuda" and not torch.cuda.is_available():
-        raise ValueError("CUDA was requested, but no CUDA device is available.")
-
+def main(args):
     api = wandb.Api()
-    run, run_path = resolve_run(api, cli_args.run_id, entity=cli_args.entity, project=cli_args.project)
+
+    wandb_prefix = getattr(api, "default_entity") + '/DatasetDistillation'
+    run = api.run(f'{wandb_prefix}/{args.run_id}')
+
+    metric = 'Accuracy/'
+    rows = []
+    for row in run.scan_history(keys=[metric, '_step']):
+        if metric in row and row[metric] is not None:
+            rows.append(row)
+    best_run = sorted(rows, key=lambda x: x[metric], reverse=True)[0]['_step']
+    iteration_used = cli_args.iteration if cli_args.iteration else best_run
+
+    lr = list(run.scan_history(['Synthetic_LR'], min_step=iteration_used, max_step=iteration_used+1))[0]['Synthetic_LR']
 
     source_config = {str(key): value for key, value in dict(run.config).items() if not str(key).startswith("_")}
-    distill_args = build_run_args(source_config)
-    overrides = {}
 
-    if cli_args.data_path is not None:
-        add_override(overrides, "data_path", distill_args.data_path, cli_args.data_path)
-        distill_args.data_path = cli_args.data_path
-    if cli_args.dsa_strategy is not None:
-        add_override(overrides, "dsa_strategy", distill_args.dsa_strategy, cli_args.dsa_strategy)
-        distill_args.dsa_strategy = cli_args.dsa_strategy
+    run_args = SimpleNamespace(**source_config)
+    run_args.run_id = cli_args.run_id
+    run_args.device = cli_args.device
+    run_args.lr_net_syn = lr
 
-    if cli_args.device is not None:
-        add_override(overrides, "device", distill_args.device, device)
-    distill_args.device = device
-    if cli_args.seed is not None:
-        add_override(overrides, "seed", distill_args.seed, int(cli_args.seed))
-        distill_args.seed = int(cli_args.seed)
-    fix_seed(distill_args.seed)
+    artifact_collection = f'distillation-eval-{args.run_id}'
+    artifact_path = str(Path("logged_files") / "traces" / run.id / str(iteration_used))
+    api.artifact(f'{WANDB_PREFIX}/DatasetDistillation/{artifact_collection}:iter_{iteration_used}').download(root=artifact_path)
 
-    download_root = Path(cli_args.download_dir) / run.id
-    download_root.mkdir(parents=True, exist_ok=True)
+    image_fn, sensor_fn = None, None
+    for fn in glob(artifact_path + "/*"):
+        fn = os.path.basename(fn)
+        if fn.startswith("labels"):
+            label_fn = fn
+        elif fn.startswith("images"):
+            image_fn = fn
+        elif fn.startswith("sensor"):
+            sensor_fn = fn
 
-    snapshot = load_distillation_snapshot(api, run_path, run, cli_args.iteration, download_root)
-    distill_iteration = snapshot["iteration"]
+    images_train, sensors_train = None, None
+    labels_train = torch.load(artifact_path + "/" + label_fn, map_location="cpu").long()
+    if image_fn:
+        images_train = torch.load(artifact_path + "/" + image_fn, map_location="cpu").float()
+    if sensor_fn:
+        sensors_train = torch.load(artifact_path + "/" + sensor_fn, map_location="cpu").float()
 
-    if cli_args.train_epochs is None:
-        train_epochs = distill_args.epoch_eval_train
-    else:
-        train_epochs = int(cli_args.train_epochs)
-        add_override(overrides, "epoch_eval_train", distill_args.epoch_eval_train, train_epochs)
 
-    default_train_lr = recover_synthetic_lr(run, distill_iteration, distill_args.lr_teacher)
-    if cli_args.train_lr is None:
-        train_lr = default_train_lr
-    else:
-        train_lr = float(cli_args.train_lr)
-        add_override(overrides, "train_lr", default_train_lr, train_lr)
+    """
+    image_path = next((artifact_dir / name for name in image_candidates if (artifact_dir / name).exists()), None)
+    label_path = next((artifact_dir / name for name in label_candidates if (artifact_dir / name).exists()), None)
+    if image_path is None or label_path is None:
+        raise FileNotFoundError("Could not find synthetic images/labels in artifact {}".format(artifact_ref))    
+    
+    if resolved_iteration is not None:
+        try:
+            for row in run.scan_history(keys=["Synthetic_LR", "_step"]):
+                if row.get("_step") == int(resolved_iteration) and row.get("Synthetic_LR") is not None:
+                    args.lr_net = float(row["Synthetic_LR"])
+                    break
+        except Exception:
+            pass
+    """
 
-    distill_args.epoch_eval_train = int(train_epochs)
-    schedule_initial_lr = trace_lr_for_epoch(1)
-    if not config_values_equal(train_lr, schedule_initial_lr):
-        add_override(overrides, "train_lr", train_lr, schedule_initial_lr)
-    train_lr = schedule_initial_lr
-    distill_args.lr_net = float(train_lr)
-    if cli_args.batch_train is not None:
-        add_override(overrides, "batch_train", distill_args.batch_train, int(cli_args.batch_train))
-        distill_args.batch_train = int(cli_args.batch_train)
-    if distill_args.epoch_eval_train < 1:
-        raise ValueError("epoch_eval_train must be at least 1.")
-    if distill_args.batch_train < 1:
-        raise ValueError("batch_train must be at least 1.")
+    fix_seed(run_args.seed)
+    
+    channel, im_size, num_classes, _, _, _, _, _, testloader, _ = get_dataset(run_args)
+    run_args.im_size = im_size
 
-    channel, im_size, num_classes, _, _, _, _, dst_test, testloader, _, _, _ = get_dataset(
-        distill_args.dataset,
-        distill_args.data_path,
-        distill_args.batch_real,
-        distill_args.subset,
-        args=distill_args,
+    net = get_network(
+        run_args.model,
+        channel,
+        num_classes,
+        im_size,
+        dist=False,
+        unimodal=getattr(run_args, "unimodal", ""),
+        n_groups=getattr(run_args, "n_groups", 8),
+        n_sensors=getattr(run_args, "n_sensors", None),
+        n_sensor_features=getattr(run_args, "n_sensor_features", None),
     )
-    distill_args.im_size = im_size
 
-# TODO: einbauen!
-#    print('*' * 80)
-#    print('Limited test to 10%')
-#    dst_test.data = dst_test.data[: len(dst_test) // 10]
-#    print('*' * 80)
+    wandb_config = dict(source_config)
+    wandb_config.update({
+        "device": args.device,
+        "lr_net_syn": float(run_args.lr_net_syn),
+        "iteration": args.iteration,
+        "source_run_id": run.id,
+        "source_run_name": run.name,
+        "synthetic_images": int(labels_train.shape[0]),
+    })
 
-    default_test_batch_size = getattr(testloader, "batch_size", None)
-    if cli_args.batch_test is not None:
-        if int(cli_args.batch_test) < 1:
-            raise ValueError("batch_test must be at least 1.")
-        add_override(overrides, "batch_test", default_test_batch_size, int(cli_args.batch_test))
-        testloader = DataLoader(dst_test, batch_size=int(cli_args.batch_test), shuffle=False, num_workers=0)
-
-    multimodal = distill_args.unimodal != "model"
-    if multimodal and snapshot["sensors"] is None:
-        raise ValueError("The selected artifact does not contain synthetic sensor tensors, but the run expects multimodal inputs.")
-
-    synthetic_dataset = build_synthetic_dataset(snapshot["images"], snapshot["labels"], snapshot["sensors"])
-    if len(synthetic_dataset) == 0:
-        raise ValueError("Loaded synthetic dataset is empty.")
-
-    trainloader = DataLoader(synthetic_dataset, batch_size=distill_args.batch_train, shuffle=True,num_workers=0)
-    test_batch_size = getattr(testloader, "batch_size", None)
-
-    model = get_network(distill_args.model, channel, num_classes, im_size, dist=False, init_seed=distill_args.seed, **build_model_kwargs(distill_args),).to(device)
-
-    source_momentum = getattr(distill_args, "momentum", DEFAULT_MOMENTUM)
-    source_weight_decay = getattr(distill_args, "weight_decay", DEFAULT_WEIGHT_DECAY)
-    if source_momentum is None:
-        source_momentum = DEFAULT_MOMENTUM
-    if source_weight_decay is None:
-        source_weight_decay = DEFAULT_WEIGHT_DECAY
-    momentum = float(source_momentum) if cli_args.momentum is None else float(cli_args.momentum)
-    weight_decay = float(source_weight_decay) if cli_args.weight_decay is None else float(cli_args.weight_decay)
-    if cli_args.momentum is not None:
-        add_override(overrides, "momentum", source_momentum, momentum)
-    if cli_args.weight_decay is not None:
-        add_override(overrides, "weight_decay", source_weight_decay, weight_decay)
-
-    optimizer = torch.optim.SGD(model.parameters(), lr=float(train_lr), momentum=momentum, weight_decay=weight_decay)
-#    optimizer = torch.optim.Adam(model.parameters(), lr=float(train_lr), weight_decay=0.0005)
-    criterion = nn.CrossEntropyLoss().to(device)
-
-    snapshot_label = "best_so_far" if cli_args.iteration is None else "iter_{}".format(cli_args.iteration)
-    print(f"Loaded distill run {run.name or run.id} ({run.id}) | dataset={distill_args.dataset} model={distill_args.model}")
-    print(f"Using snapshot {snapshot_label} | resolved distill iteration={distill_iteration} | epochs={train_epochs}")
-
-    best_test_acc = float("-inf")
-    best_epoch = -1
-
-    wandb_run_name = "{}-{}".format(run.name or run.id, snapshot_label)
-    wandb_config = prepare_wandb_config(source_config)
-    merge_wandb_metadata(
-        wandb_config,
-        {
-            "source_run_id": run.id,
-            "source_run_name": run.name,
-            "source_run_path": run_path,
-            "source_project": cli_args.project,
-            "requested_iteration": cli_args.iteration,
-            "resolved_iteration": distill_iteration,
-            "batch_test": test_batch_size,
-            "train_epochs": int(train_epochs),
-            "train_lr": float(train_lr),
-            "lr_scheduler": "fixed_step",
-            "lr_schedule": TRACE_LR_SCHEDULE,
-            "momentum": momentum,
-            "weight_decay": weight_decay,
-            "runtime_device": device,
-            "download_dir": download_root,
-        }
-    )
-    wandb_config["overrides"] = prepare_wandb_value(overrides)
-
-    wandb_kwargs = {
-        "config": wandb_config,
-        "mode": os.environ.get("WANDB_MODE", "online"),
-        "name": wandb_run_name,
-        "project": WANDB_PROJECT,
-        "reinit": True,
-    }
-
-    with wandb.init(**wandb_kwargs) as wandb_run:
-        for ep in range(1, int(train_epochs) + 1):
-            current_lr = trace_lr_for_epoch(ep)
-            for param_group in optimizer.param_groups:
-                param_group["lr"] = current_lr
-
-            train_loss, train_acc = epoch("train", trainloader, model, optimizer, criterion, distill_args, aug=True, texture=distill_args.texture)
-
-            with torch.no_grad():
-                test_loss, test_acc = epoch("test", testloader, model, optimizer, criterion, distill_args, aug=False,texture=False)
-
-            train_loss_value = float(train_loss)
-            train_acc_value = float(train_acc)
-            test_loss_value = float(test_loss)
-            test_acc_value = float(test_acc)
-            metric_payload = {
-                "test_acc": test_acc_value,
-                "test_loss": test_loss_value,
-                "train_acc": train_acc_value,
-                "train_loss": train_loss_value,
-                "lr": current_lr,
-            }
-            wandb.log(metric_payload, step=ep)
-
-            if test_acc_value > best_test_acc:
-                best_test_acc = test_acc_value
-                best_epoch = ep
-
-            print(f"Epoch {ep:04d}/{int(train_epochs):04d} | lr = {current_lr:.8f} | train loss = {train_loss_value:.6f} acc = {train_acc_value:.4f} | test loss = {test_loss_value:.6f} acc = {test_acc_value:.4f}")
-
-        wandb_run.summary["best_test_acc"] = float(best_test_acc)
-        wandb_run.summary["best_epoch"] = int(best_epoch)
-
-    print(f"Finished | best test acc = {best_test_acc:.4f} at epoch {best_epoch}")
+    trace_name = f"{run.name}-iter_{iteration_used}"
+    with wandb.init(project="SyntheticTraining", name=trace_name, config=wandb_config, reinit=True) as wandb_run:
+        _, acc_train_list, acc_test = evaluate_synset(
+            0,
+            net,
+            images_train,
+            labels_train,
+            testloader,
+            run_args,
+            sensor_train=sensors_train,
+            training_logs=True,
+        )
+        wandb_run.summary["final_train_acc"] = float(acc_train_list[-1])
+        wandb_run.summary["final_test_acc"] = float(acc_test)
 
 
 if __name__ == "__main__":
+    default_device = "cuda" if torch.cuda.is_available() else "cpu"
+
     parser = argparse.ArgumentParser(description="Train the evaluation model on a distilled snapshot from a W&B distillation run.")
     parser.add_argument("run_id", type=str, help="W&B distillation run id. You can also pass entity/project/run_id.")
     parser.add_argument("--iteration",type=int, default=None, help="Specific distillation iteration to load. Defaults to the best saved snapshot.")
-    parser.add_argument("--entity", type=str, default=os.environ.get("WANDB_ENTITY"), help="Optional W&B entity when run_id is not fully qualified.")
-    parser.add_argument("--project", type=str, default="DatasetDistillation", help="W&B project that contains the distillation run.")
-    parser.add_argument("--epoch_eval_train", "--train_epochs", dest="train_epochs", type=int,default=None, help="Override the number of evaluation-training epochs. Defaults to epoch_eval_train from the distill run.",)
-    parser.add_argument("--lr", "--train_lr", dest="train_lr", type=float, default=None, help="Override the evaluation learning rate. Defaults to Synthetic_LR at the selected iteration.")
-    parser.add_argument("--batch_train", type=int, default=None, help="Override the synthetic training batch size. Defaults to batch_train from the distill run.")
-    parser.add_argument("--batch_test", type=int, default=None, help="Override the real test batch size. Defaults to the testloader batch size from the distill run.")
-    parser.add_argument("--data_path", type=str, default=None, help="Override the dataset path stored in the distill run config.")
-    parser.add_argument("--seed", type=int, default=None, help="Override the seed from the distill run config.")
-    parser.add_argument("--device", type=str, default=None, choices=["cpu", "cuda"], help="Device to use. Defaults to cuda when available.")
-    parser.add_argument("--momentum", type=float, default=None, help="Momentum for the evaluation SGD optimizer.")
-    parser.add_argument("--weight_decay", type=float, default=None, help="Weight decay for the evaluation SGD optimizer.")
-    parser.add_argument("--download_dir", type=str, default="./logged_files/traces",help="Directory used to download the selected W&B artifact.")
-    parser.add_argument('--dsa_strategy', type=str, default=None, help='Override the differentiable Siamese augmentation strategy from the distill run config.')
-    parser.add_argument('--optimizer', type=str, default=None, choices=["SGD", "Adam"], help='Optimizer to use for evaluation training. Overrides the optimizer choice from the distill run config if specified.')
-    parser.add_argument('--aug_chance', type=float, default=0.5, help='Override the augmentation chance for evaluation training. Defaults to 0.5 if DSA is enabled and no value is specified.')
+    parser.add_argument("--device", type=str, default=default_device, choices=["cpu", "cuda"], help="Device to use. Defaults to cuda when available.")
+    cli_args = parser.parse_args()
 
-    args = parser.parse_args()
-    main(args)
+    main(cli_args)
