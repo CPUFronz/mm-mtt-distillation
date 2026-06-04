@@ -317,7 +317,7 @@ def main(args):
 
                 if args.unimodal != 'model':
                     sensor_tensor = sensor_syn.detach().cpu()
-                    sensor_path = os.path.join(save_dir, "sensor_{}.pt".format(it))
+                    sensor_path = os.path.join(save_dir, "sensors_{}.pt".format(it))
                     torch.save(sensor_tensor, sensor_path)
                     artifact_files.append(sensor_path)
 
