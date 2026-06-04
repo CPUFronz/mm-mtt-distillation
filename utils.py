@@ -817,6 +817,7 @@ def parse_args(mode):
         parser.add_argument('--epoch_eval_train', type=int, default=1000, help='epochs to train a model with synthetic data')
         parser.add_argument('--Iteration', type=int, default=5000, help='how many distillation steps to perform')
         parser.add_argument('--lr_img', type=float, default=1000, help='learning rate for updating synthetic images')
+        parser.add_argument('--lr_sens', type=float, default=0.1, help='learning rate for updating synthetic sensor data')
         parser.add_argument('--lr_lr', type=float, default=1e-05, help='learning rate for updating... learning rate')
         parser.add_argument('--batch_syn', type=int, default=None, help='should only use this if you run out of VRAM')
         parser.add_argument('--data_init', type=str, default='real', choices=["noise", "real"], help='noise/real: initialize synthetic images from random noise or randomly sampled real images.')

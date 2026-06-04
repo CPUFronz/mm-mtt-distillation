@@ -193,7 +193,7 @@ def main(args):
 
     if args.unimodal != 'model':
         sensor_syn = sensor_syn.detach().to(args.device).requires_grad_(True)
-        optimizer_sens = torch.optim.SGD([sensor_syn], lr=args.lr_img, momentum=0.5)
+        optimizer_sens = torch.optim.SGD([sensor_syn], lr=args.lr_sens, momentum=0.5)
 
     optimizers = []
     if args.unimodal != 'sensor':
