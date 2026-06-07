@@ -71,8 +71,6 @@ def main(args):
 
     print("CUDNN STATUS: {}".format(torch.backends.cudnn.enabled))
 
-    args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
     if args.model not in ['MMSConvB', 'Perceiver']:
         args.unimodal = 'model'
 

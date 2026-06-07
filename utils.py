@@ -787,6 +787,8 @@ def fix_seed(seed):
 
 
 def parse_args(mode):
+    default_device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
     parser = argparse.ArgumentParser(description='Parameter Processing')
     parser.add_argument('--dataset', type=str, default='CIFAR10', help='dataset')
     parser.add_argument('--model', type=str, default='ConvNet', help='model')
@@ -800,6 +802,7 @@ def parse_args(mode):
     parser.add_argument('--n_groups', type=int, default=8, help='group norm groups (for MMSConvB)')
     parser.add_argument('--name', type=str, default='Run', help='name of wandb run')
     parser.add_argument('--optimizer', type=str, default='SGD', choices=["SGD", "Adam"], help='Optimizer to use for evaluation training. Overrides the optimizer choice from the distill run config if specified.')
+    parser.add_argument('--device', type=str, default=default_device, help='device to use for training')
 
     if mode == "buffer":
         parser.add_argument('--num_experts', type=int, default=100, help='training iterations')
