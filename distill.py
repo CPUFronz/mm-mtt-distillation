@@ -74,7 +74,7 @@ def main(args):
     if args.model not in ['MMSConvB', 'Perceiver']:
         args.unimodal = 'model'
 
-    eval_it_pool = np.arange(0, args.distill_steps + 1, args.eval_it).tolist()
+    eval_iterations = np.arange(0, args.distill_steps + 1, args.eval_interval).tolist()
     channel, im_size, num_classes, _, _, _, dst_train, dst_test, testloader, class_map = get_dataset(args)
     model_eval_pool = [args.model]
 
@@ -249,7 +249,7 @@ def main(args):
 
         wandb.log({"Progress": it}, step=it)
         ''' Evaluate synthetic data '''
-        if it in eval_it_pool:
+        if it in eval_iterations:
             for model_eval in model_eval_pool:
                 print('-------------------------\nEvaluation\nmodel_train = %s, model_eval = %s, iteration = %d'%(args.model, model_eval, it))
                 if args.augmentations:
@@ -296,7 +296,7 @@ def main(args):
                 wandb.log({'Max_Std/': best_std[model_eval]}, step=it)
 
 
-        if it in eval_it_pool:
+        if it in eval_iterations:
             with torch.no_grad():
                 image_save = image_syn.to(args.device)
 

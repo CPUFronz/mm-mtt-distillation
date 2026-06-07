@@ -791,7 +791,7 @@ def parse_args(mode):
     else:
         parser.add_argument('--spc', type=int, default=1, help='samples per class')
         parser.add_argument('--num_eval', type=int, default=5, help='how many networks to evaluate on')
-        parser.add_argument('--eval_it', type=int, default=100, help='how often to evaluate')
+        parser.add_argument('--eval_interval', type=int, default=100, help='evaluate every N distillation steps')
         parser.add_argument('--epoch_eval_train', type=int, default=1000, help='epochs to train a model with synthetic data')
         parser.add_argument('--distill_steps', type=int, default=5000, help='how many distillation steps to perform')
         parser.add_argument('--lr_img', type=float, default=1000, help='learning rate for updating synthetic images')
