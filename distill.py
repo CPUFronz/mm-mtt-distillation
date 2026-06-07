@@ -122,34 +122,23 @@ def main(args):
 
     if args.unimodal != 'model':
         sensor_shape = sensor_all.shape[1:] if sensor_all.numel() > 0 else (args.n_input_features,)
-        if args.unimodal != 'image':
-            sensor_syn = torch.randn(size=(num_classes * args.spc, *sensor_shape), dtype=torch.float)
-        else:
+        if args.unimodal == 'image':
             sensor_syn = torch.zeros(size=(num_classes * args.spc, *sensor_shape), dtype=torch.float) # initialize with 0 for image-only
+        elif args.unimodal == 'sensor':            
+            sensor_syn = torch.randn(size=(num_classes * args.spc, *sensor_shape), dtype=torch.float)
+            image_syn = torch.zeros_like(image_syn)
+        else:
+            sensor_syn = torch.randn(size=(num_classes * args.spc, *sensor_shape), dtype=torch.float)
 
     syn_lr = torch.tensor(args.lr).to(args.device)
 
     if args.data_init == 'real':
-        print('initialize synthetic data from random real images')
-        if args.unimodal != 'model' and args.unimodal != 'image':
-            print('initialize synthetic sensor data from random real sensor data')
-        with torch.no_grad():
-            for c in range(num_classes):
-                class_slice = slice(c * args.spc, (c + 1) * args.spc)
-                class_indices = np.random.permutation(indices_class[c])[:args.spc]
-                image_syn[class_slice] = images_all[class_indices]
-                if args.unimodal != 'model' and args.unimodal != 'image':
-                    sensor_syn[class_slice] = sensor_all[class_indices]
-
+        for c in range(num_classes):
+            class_slice = slice(c * args.spc, (c + 1) * args.spc)
+            class_indices = np.random.permutation(indices_class[c])[:args.spc]
+            image_syn[class_slice] = images_all[class_indices]
             if args.unimodal != 'model' and args.unimodal != 'image':
-                for c in range(num_classes):
-                    class_slice = slice(c * args.spc, (c + 1) * args.spc)
-                    sensor_syn[class_slice] = sensor_all[class_indices]
-    else:
-        print('initialize synthetic data from random noise')
-        if args.unimodal != 'model' and args.unimodal != 'image':
-            print('initialize synthetic sensor data from random noise')
-            image_syn = torch.zeros_like(image_syn)
+                sensor_syn[class_slice] = sensor_all[class_indices]
 
 
     ''' training '''
