@@ -18,10 +18,6 @@ def main(args, trial=None):
 
     aug = DiffAugment(args.augmentations)
 
-
-    if args.model not in ['MMSConvB', 'Perceiver']:
-        args.unimodal = 'model'
-
     channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, class_map = get_dataset(args)
 
     # print('\n================== Exp %d ==================\n '%exp)
@@ -150,9 +146,6 @@ def main(args, trial=None):
 
 if __name__ == '__main__':
     args = parse_args('buffer')
-
-    if args.model not in ['MMSConvB', 'Perceiver']:
-        args.unimodal = 'model'  # used by multimodal datasets, to only provide images for unimodal models
 
     args.wandb_mode = os.environ.get('WANDB_MODE', 'online')
     if args.optuna_trials > 0:

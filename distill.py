@@ -71,9 +71,6 @@ def main(args):
 
     print("CUDNN STATUS: {}".format(torch.backends.cudnn.enabled))
 
-    if args.model not in ['MMSConvB', 'Perceiver']:
-        args.unimodal = 'model'
-
     eval_iterations = np.arange(0, args.distill_steps + 1, args.eval_interval).tolist()
     channel, im_size, num_classes, _, _, _, dst_train, dst_test, testloader, class_map = get_dataset(args)
     model_eval_pool = [args.model]
