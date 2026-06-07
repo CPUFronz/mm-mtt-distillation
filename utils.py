@@ -806,8 +806,52 @@ def parse_args(mode):
         parser.add_argument('--max_files', type=int, default=None, help='number of expert files to read (leave as None unless doing ablations)')
         parser.add_argument('--max_experts', type=int, default=None, help='number of experts to read per file (leave as None unless doing ablations)')
         parser.add_argument('--min_start_epoch', type=int, default=0, help='min epoch we can start at')
+    if mode == 'baseline':
+        baselines = ['DPP', 'kmeans', 'kcenter', 'gist','random', 'all']
+        parser.add_argument('--method', type=str, default='random', choices=baselines, help='baseline method to compare to (e.g. random, kmeans, etc.)')
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.model not in ['MMSConvB', 'Perceiver']:
+        args.unimodal = 'model'
+    
+    return args
+
+
+def build_dataset(dst_train, channel, num_classes, class_map, unimodal):
+    images_all = []
+    sensor_all = []
+    labels_all = []
+    indices_class = [[] for c in range(num_classes)]
+    print("BUILDING DATASET")
+    for i in tqdm.tqdm(range(len(dst_train))):
+        if unimodal == 'model':
+            sample = dst_train[i]
+            images_all.append(torch.unsqueeze(sample[0], dim=0))
+            labels_all.append(class_map[torch.tensor(sample[1]).item()])
+        else:
+            sample = dst_train[i]
+            images_all.append(torch.unsqueeze(sample[0][0], dim=0))
+            sensor_all.append(torch.unsqueeze(sample[0][1], dim=0))
+            labels_all.append(class_map[torch.tensor(sample[1]).item()])
+
+    for i, lab in tqdm.tqdm(enumerate(labels_all)):
+        indices_class[lab].append(i)
+    images_all = torch.cat(images_all, dim=0).to('cpu')
+    sensor_all = torch.cat(sensor_all, dim=0).to('cpu') if sensor_all else torch.tensor([])
+    labels_all = torch.tensor(labels_all, dtype=torch.long).to('cpu')
+
+    if unimodal == 'sensor':
+        images_all = torch.zeros_like(images_all)
+    elif unimodal == 'image':
+        sensor_all = torch.zeros_like(sensor_all)
+
+    for c in range(num_classes):
+        print('class c = %d: %d real images'%(c, len(indices_class[c])))
+
+    for ch in range(channel):
+        print('real images channel %d, mean = %.4f, std = %.4f'%(ch, torch.mean(images_all[:, ch]), torch.std(images_all[:, ch])))
+
+    return images_all, sensor_all, labels_all, indices_class
 
 
 class MultimodalTensorDataset(Dataset):

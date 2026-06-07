@@ -1,5 +1,3 @@
-# TODO: simplify / unify with the rest of the codebase
-
 import numpy as np
 import torch
 

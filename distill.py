@@ -112,39 +112,8 @@ def main(args):
     print('Hyper-parameters: \n', args.__dict__)
     print('Evaluation model pool: ', model_eval_pool)
 
-    ''' organize the real dataset '''
-    images_all = []
-    sensor_all = []
-    labels_all = []
-    indices_class = [[] for c in range(num_classes)]
-    print("BUILDING DATASET")
-    for i in tqdm(range(len(dst_train))):
-        if args.unimodal == 'model':
-            sample = dst_train[i]
-            images_all.append(torch.unsqueeze(sample[0], dim=0))
-            labels_all.append(class_map[torch.tensor(sample[1]).item()])
-        else:
-            sample = dst_train[i]
-            images_all.append(torch.unsqueeze(sample[0][0], dim=0))
-            sensor_all.append(torch.unsqueeze(sample[0][1], dim=0))
-            labels_all.append(class_map[torch.tensor(sample[1]).item()])
-
-    for i, lab in tqdm(enumerate(labels_all)):
-        indices_class[lab].append(i)
-    images_all = torch.cat(images_all, dim=0).to('cpu')
-    sensor_all = torch.cat(sensor_all, dim=0).to('cpu') if sensor_all else torch.tensor([])
-    labels_all = torch.tensor(labels_all, dtype=torch.long).to('cpu')
-
-    if args.unimodal == 'sensor':
-        images_all = torch.zeros_like(images_all)
-    elif args.unimodal == 'image':
-        sensor_all = torch.zeros_like(sensor_all)
-
-    for c in range(num_classes):
-        print('class c = %d: %d real images'%(c, len(indices_class[c])))
-
-    for ch in range(channel):
-        print('real images channel %d, mean = %.4f, std = %.4f'%(ch, torch.mean(images_all[:, ch]), torch.std(images_all[:, ch])))
+    ''' organize the real dataset '''    
+    images_all, sensor_all, _, indices_class = build_dataset(dst_train, channel, num_classes, class_map, args.unimodal)
 
 
     ''' initialize the synthetic data '''
