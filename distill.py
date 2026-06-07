@@ -120,7 +120,7 @@ def main(args):
     label_syn = torch.tensor([np.ones(args.spc,dtype=np.int_)*i for i in range(num_classes)], dtype=torch.long, requires_grad=False, device=args.device).view(-1) # [0,0,0, 1,1,1, ..., 9,9,9]
     image_syn = torch.randn(size=(num_classes * args.spc, channel, im_size[0], im_size[1]), dtype=torch.float)
 
-    if args.unimodal != 'model':
+    if args.unimodal != 'unimodal':
         sensor_shape = sensor_all.shape[1:] if sensor_all.numel() > 0 else (args.n_input_features,)
         if args.unimodal == 'image':
             sensor_syn = torch.zeros(size=(num_classes * args.spc, *sensor_shape), dtype=torch.float) # initialize with 0 for image-only
@@ -137,7 +137,7 @@ def main(args):
             class_slice = slice(c * args.spc, (c + 1) * args.spc)
             class_indices = np.random.permutation(indices_class[c])[:args.spc]
             image_syn[class_slice] = images_all[class_indices]
-            if args.unimodal != 'model' and args.unimodal != 'image':
+            if args.unimodal != 'unimodal' and args.unimodal != 'image':
                 sensor_syn[class_slice] = sensor_all[class_indices]
 
 
@@ -147,14 +147,14 @@ def main(args):
     optimizer_img = torch.optim.SGD([image_syn], lr=args.lr_img, momentum=0.5)
     optimizer_lr = torch.optim.SGD([syn_lr], lr=args.lr_lr, momentum=0.5)    
 
-    if args.unimodal != 'model':
+    if args.unimodal != 'unimodal':
         sensor_syn = sensor_syn.detach().to(args.device).requires_grad_(True)
         optimizer_sens = torch.optim.SGD([sensor_syn], lr=args.lr_sens, momentum=0.5)
 
     optimizers = []
     if args.unimodal != 'sensor':
         optimizers.append(optimizer_img)
-    if args.unimodal != 'model' and args.unimodal != 'image':
+    if args.unimodal != 'unimodal' and args.unimodal != 'image':
         optimizers.append(optimizer_sens)
     optimizers.append(optimizer_lr)
 
@@ -223,13 +223,13 @@ def main(args):
                     eval_labs = label_syn
                     with torch.no_grad():
                         image_save = image_syn
-                        if args.unimodal != 'model':
+                        if args.unimodal != 'unimodal':
                             sensor_save = sensor_syn
                     
                     # avoid any unaware modification
                     image_syn_eval = copy.deepcopy(image_save.detach())
                     label_syn_eval = copy.deepcopy(eval_labs.detach())
-                    if args.unimodal != 'model':
+                    if args.unimodal != 'unimodal':
                         sensor_syn_eval = copy.deepcopy(sensor_save.detach())
                     else:
                         sensor_syn_eval = None
@@ -271,7 +271,7 @@ def main(args):
                 torch.save(label_syn.cpu(), label_path)
                 artifact_files.extend([image_path, label_path])
 
-                if args.unimodal != 'model':
+                if args.unimodal != 'unimodal':
                     sensor_tensor = sensor_syn.detach().cpu()
                     sensor_path = os.path.join(save_dir, "sensors_{}.pt".format(it))
                     torch.save(sensor_tensor, sensor_path)
@@ -287,7 +287,7 @@ def main(args):
 
                 log_eval_img(image_save, 'Clipped_Synthetic_Images', it)                    
 
-                if args.unimodal != 'model':
+                if args.unimodal != 'unimodal':
                     sensor_save = sensor_tensor.numpy()
                     sensor_save = dst_test.scaler.inverse_transform(sensor_save)
                     sensor_save_df = pd.DataFrame(sensor_save, columns=dst_test.scaler.get_feature_names_out())
@@ -335,7 +335,7 @@ def main(args):
         starting_params = torch.cat([p.data.to(args.device).reshape(-1) for p in starting_params], 0)
 
         syn_images = image_syn
-        if args.unimodal != 'model':
+        if args.unimodal != 'unimodal':
             syn_sensor = sensor_syn
 
         y_hat = label_syn.to(args.device)
@@ -356,7 +356,7 @@ def main(args):
             if args.augmentations:
                 x = augs(x)
 
-            if args.unimodal != 'model':
+            if args.unimodal != 'unimodal':
                 x = (x, syn_sensor[these_indices])
 
             if args.distributed:

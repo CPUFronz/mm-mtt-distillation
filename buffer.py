@@ -39,7 +39,7 @@ def main(args, trial=None):
     indices_class = [[] for c in range(num_classes)]
     print("BUILDING DATASET")
     for i in tqdm(range(len(dst_train))):
-        if args.unimodal == 'model':
+        if args.unimodal == 'unimodal':
             sample = dst_train[i]
             images_all.append(torch.unsqueeze(sample[0], dim=0))
             labels_all.append(class_map[torch.tensor(sample[1]).item()])
@@ -65,7 +65,7 @@ def main(args, trial=None):
 
     trajectories = []
 
-    if args.unimodal == 'model':
+    if args.unimodal == 'unimodal':
         dst_train = TensorDataset(copy.deepcopy(images_all.detach()), copy.deepcopy(labels_all.detach()))
     else:
         dst_train = MultimodalTensorDataset(copy.deepcopy(images_all.detach()), copy.deepcopy(sensor_all.detach()), copy.deepcopy(labels_all.detach()))

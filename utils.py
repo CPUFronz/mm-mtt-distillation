@@ -317,7 +317,7 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug):
         net.eval()
 
     for i_batch, datum in enumerate(dataloader):
-        if args.unimodal == 'model':
+        if args.unimodal == 'unimodal':
             img = datum[0].float().to(args.device)
             lab = datum[1].long().to(args.device)
         else:
@@ -331,7 +331,7 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug):
 
         n_b = lab.shape[0]
 
-        if args.unimodal == 'model':
+        if args.unimodal == 'unimodal':
             output = net(img)
         else:
             output = net((img, sen))
@@ -812,7 +812,7 @@ def parse_args(mode):
 
     args = parser.parse_args()
     if args.model not in ['MMSConvB', 'Perceiver']:
-        args.unimodal = 'model'
+        args.unimodal = 'unimodal'
     
     return args
 
@@ -824,7 +824,7 @@ def build_dataset(dst_train, channel, num_classes, class_map, unimodal):
     indices_class = [[] for c in range(num_classes)]
     print("BUILDING DATASET")
     for i in tqdm.tqdm(range(len(dst_train))):
-        if unimodal == 'model':
+        if unimodal == 'unimodal':
             sample = dst_train[i]
             images_all.append(torch.unsqueeze(sample[0], dim=0))
             labels_all.append(class_map[torch.tensor(sample[1]).item()])
@@ -953,7 +953,7 @@ class RaspiCarDataset(Dataset):
 
         label = row['steering_angle']
 
-        if self.unimodal == 'model':
+        if self.unimodal == 'unimodal':
             return image, label
         else:
             return (image, sensor_data), label
@@ -1359,7 +1359,7 @@ class RoboMNISTDataset(Dataset):
 
         label = row['label']
 
-        if self.unimodal == 'model':
+        if self.unimodal == 'unimodal':
             return image, label
         else:
             return (image, sensor_data), label

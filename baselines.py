@@ -30,14 +30,14 @@ def select_random_subset(images_all, sensor_all, labels_all, indices_class, spc,
         selected_labels.append(labels_all[idx])
         if unimodal != 'sensor':
             selected_images.append(images_all[idx])
-        if unimodal != 'image' and unimodal != 'model':
+        if unimodal != 'image' and unimodal != 'unimodal':
             selected_sensors.append(sensor_all[idx])
 
     labels_train = torch.tensor(selected_labels, dtype=torch.long)
     images_train, sensor_train = None, None
     if unimodal != 'sensor':
         images_train = torch.stack(selected_images, dim=0)
-    if unimodal != 'image' and unimodal != 'model':
+    if unimodal != 'image' and unimodal != 'unimodal':
         sensor_train = torch.stack(selected_sensors, dim=0)
 
     return images_train, sensor_train, labels_train
