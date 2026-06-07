@@ -2,7 +2,7 @@ import os
 import torch
 import torch.nn as nn
 from tqdm import tqdm
-from utils import get_dataset, get_network, TensorDataset, epoch, parse_args, DiffAugment
+from utils import build_dataset, get_dataset, get_network, TensorDataset, epoch, parse_args, DiffAugment
 import copy
 
 
@@ -20,7 +20,6 @@ def main(args, trial=None):
 
     channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, class_map = get_dataset(args)
 
-    # print('\n================== Exp %d ==================\n '%exp)
     print('Hyper-parameters: \n', args.__dict__)
 
     save_dir = os.path.join(args.buffer_path, args.dataset)
@@ -28,34 +27,7 @@ def main(args, trial=None):
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
-    ''' organize the real dataset '''
-    images_all = []
-    sensor_all = []
-    labels_all = []
-    indices_class = [[] for c in range(num_classes)]
-    print("BUILDING DATASET")
-    for i in tqdm(range(len(dst_train))):
-        if args.unimodal == 'unimodal':
-            sample = dst_train[i]
-            images_all.append(torch.unsqueeze(sample[0], dim=0))
-            labels_all.append(class_map[torch.tensor(sample[1]).item()])
-        else:
-            sample = dst_train[i]
-            images_all.append(torch.unsqueeze(sample[0][0], dim=0))
-            sensor_all.append(torch.unsqueeze(sample[0][1], dim=0))
-            labels_all.append(class_map[torch.tensor(sample[1]).item()])
-
-    for i, lab in tqdm(enumerate(labels_all)):
-        indices_class[lab].append(i)
-    images_all = torch.cat(images_all, dim=0).to("cpu")
-    sensor_all = torch.cat(sensor_all, dim=0).to("cpu") if sensor_all else torch.tensor([])
-    labels_all = torch.tensor(labels_all, dtype=torch.long, device="cpu")
-
-    for c in range(num_classes):
-        print('class c = %d: %d real images'%(c, len(indices_class[c])))
-
-    for ch in range(channel):
-        print('real images channel %d, mean = %.4f, std = %.4f'%(ch, torch.mean(images_all[:, ch]), torch.std(images_all[:, ch])))
+    images_all, sensor_all, labels_all, _ = build_dataset(dst_train, channel, num_classes, class_map, args.unimodal)
 
     criterion = nn.CrossEntropyLoss().to(args.device)
 
