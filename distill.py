@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.utils
 from tqdm import tqdm
-from utils import get_dataset, get_network, get_eval_pool, evaluate_synset, parse_args, DiffAugment
+from utils import build_dataset, get_dataset, get_network, evaluate_synset, parse_args, DiffAugment
 import wandb
 import copy
 import random
@@ -76,7 +76,7 @@ def main(args):
 
     eval_it_pool = np.arange(0, args.distill_steps + 1, args.eval_it).tolist()
     channel, im_size, num_classes, _, _, _, dst_train, dst_test, testloader, class_map = get_dataset(args)
-    model_eval_pool = get_eval_pool(args.eval_mode, args.model, args.model)
+    model_eval_pool = [args.model]
 
     args.im_size = im_size
     if args.augmentations:

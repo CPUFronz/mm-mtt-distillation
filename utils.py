@@ -421,30 +421,6 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
         return net, acc_train_list, acc_test
 
 
-def get_eval_pool(eval_mode, model, model_eval):
-    if eval_mode == 'M': # multiple architectures
-        # model_eval_pool = ['MLP', 'ConvNet', 'AlexNet', 'VGG11', 'ResNet18', 'LeNet']
-        model_eval_pool = ['ConvNet', 'AlexNet', 'VGG11', 'ResNet18_AP', 'ResNet18']
-        # model_eval_pool = ['MLP', 'ConvNet', 'AlexNet', 'VGG11', 'ResNet18']
-    elif eval_mode == 'W': # ablation study on network width
-        model_eval_pool = ['ConvNetW32', 'ConvNetW64', 'ConvNetW128', 'ConvNetW256']
-    elif eval_mode == 'D': # ablation study on network depth
-        model_eval_pool = ['ConvNetD1', 'ConvNetD2', 'ConvNetD3', 'ConvNetD4']
-    elif eval_mode == 'A': # ablation study on network activation function
-        model_eval_pool = ['ConvNetAS', 'ConvNetAR', 'ConvNetAL']
-    elif eval_mode == 'P': # ablation study on network pooling layer
-        model_eval_pool = ['ConvNetNP', 'ConvNetMP', 'ConvNetAP']
-    elif eval_mode == 'N': # ablation study on network normalization layer
-        model_eval_pool = ['ConvNetNN', 'ConvNetBN', 'ConvNetLN', 'ConvNetIN', 'ConvNetGN']
-    elif eval_mode == 'S': # itself
-        model_eval_pool = [model[:model.index('BN')]] if 'BN' in model else [model]
-    elif eval_mode == 'C':
-        model_eval_pool = [model, 'ConvNet']
-    else:
-        model_eval_pool = [model_eval]
-    return model_eval_pool
-
-
 #####################################################################
 # added by Shadi and Franz
 #####################################################################
@@ -814,7 +790,6 @@ def parse_args(mode):
         parser.add_argument('--optuna_trials', type=int, default=0, help='number of optuna trials to run (0 disables search)')
     else:
         parser.add_argument('--spc', type=int, default=1, help='samples per class')
-        parser.add_argument('--eval_mode', type=str, default='S', help='eval_mode, check utils.py for more info')
         parser.add_argument('--num_eval', type=int, default=5, help='how many networks to evaluate on')
         parser.add_argument('--eval_it', type=int, default=100, help='how often to evaluate')
         parser.add_argument('--epoch_eval_train', type=int, default=1000, help='epochs to train a model with synthetic data')
