@@ -1,100 +1,59 @@
-import argparse
+# TODO: simplify / unify with the rest of the codebase
+
 import numpy as np
 import torch
 
 from utils import (
+    parse_args,
     get_dataset,
+    build_dataset,
     get_network,
-    get_eval_pool,
     evaluate_synset,
-    ParamDiffAug,
     fix_seed,
 )
 
 
-MULTIMODAL_MODELS = {"MMSConvB", "Perceiver"}
-
-
-def _map_label(label, class_map):
-    label = int(label)
-    if class_map is not None and label in class_map:
-        return class_map[label]
-    return label
-
-
-def build_class_indices(dst_train, num_classes, class_map, args):
-    indices_class = [[] for _ in range(num_classes)]
-    for idx in range(len(dst_train)):
-        if args.unimodal == 'model':
-            _, lab = dst_train[idx]
-        else:
-            (_, _), lab = dst_train[idx]
-        lab = _map_label(lab, class_map)
-        if lab < 0 or lab >= num_classes:
-            raise ValueError(f"Label {lab} out of range for num_classes={num_classes}")
-        indices_class[lab].append(idx)
-    return indices_class
-
-
-def select_random_subset(dst_train, indices_class, ipc, args):
-    rng = np.random.RandomState(args.seed)
-    selected = []
+def select_random_subset(images_all, sensor_all, labels_all, indices_class, spc, unimodal):
+    selected_images = []
+    selected_sensors = []
     selected_labels = []
+    selected_indices = []
 
     for c, idxs in enumerate(indices_class):
-        if len(idxs) < ipc:
-            raise ValueError(f"Not enough samples in class {c} to draw ipc={ipc} (found {len(idxs)}).")
-        choice = rng.choice(idxs, size=ipc, replace=False)
-        selected.extend(choice.tolist())
-        selected_labels.extend([c] * ipc)
+        if len(idxs) < spc:
+            raise ValueError(f"Not enough samples in class {c} to draw ipc={spc} (found {len(idxs)}).")
+        choice = np.random.choice(idxs, size=spc, replace=False)
+        selected_indices.extend(choice)
 
     # Shuffle to avoid class-ordered batches (DataLoader also shuffles).
-    order = rng.permutation(len(selected))
-    selected = [selected[i] for i in order]
-    selected_labels = [selected_labels[i] for i in order]
+    order = np.random.permutation(len(selected_indices))
 
-    images = []
-    sensors = []
-    for idx in selected:
-        if args.unimodal == 'model':
-            img, _ = dst_train[idx]
-            images.append(img)
-        else:
-            (img, sen), _ = dst_train[idx]
-            images.append(img)
-            sensors.append(sen)
+    for idx in order:
+        selected_labels.append(labels_all[idx])
+        if unimodal != 'sensor':
+            selected_images.append(images_all[idx])
+        if unimodal != 'image' and unimodal != 'model':
+            selected_sensors.append(sensor_all[idx])
 
-    images_train = torch.stack(images, dim=0)
     labels_train = torch.tensor(selected_labels, dtype=torch.long)
-    sensor_train = None
-    if args.unimodal != 'model':
-        sensor_train = torch.stack(sensors, dim=0)
+    images_train, sensor_train = None, None
+    if unimodal != 'sensor':
+        images_train = torch.stack(selected_images, dim=0)
+    if unimodal != 'image' and unimodal != 'model':
+        sensor_train = torch.stack(selected_sensors, dim=0)
 
-    return images_train, labels_train, sensor_train
+    return images_train, sensor_train, labels_train
 
 
 def main(args):
-    if args.model not in MULTIMODAL_MODELS:
-        args.unimodal = 'model'
-
-    args.dsa = True if args.dsa == 'True' else False
-    args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
     fix_seed(args.seed)
 
-    channel, im_size, num_classes, _class_names, _mean, _std, dst_train, _dst_test, testloader, _loader_train_dict, class_map, _class_map_inv = get_dataset(args.dataset, args.data_path, args.batch_real, args.subset, args=args)
+    function_map = {
+        'random': select_random_subset,
+    }
 
-    args.im_size = im_size
-    args.dsa_param = ParamDiffAug.copy()
-
-    model_eval_pool = get_eval_pool(args.eval_mode, args.model, args.model)
-
-    indices_class = build_class_indices(dst_train, num_classes, class_map, args)
-
-    if args.method != 'random':
-        raise ValueError(f"Unknown method: {args.method}")
-
-    images_train, labels_train, sensor_train = select_random_subset(dst_train, indices_class, args.ipc, args)
+    channel, im_size, num_classes, _, _, _, dst_train, _, testloader, class_map = get_dataset(args)
+    images_all, sensor_all, labels_all, indices_class = build_dataset(dst_train, channel, num_classes, class_map, args.unimodal)
 
     kwargs = {
         'unimodal': args.unimodal,
@@ -102,63 +61,34 @@ def main(args):
         'n_sensors': getattr(args, 'n_sensors', None),
         'n_sensor_features': getattr(args, 'n_sensor_features', None),
     }
+    args.lr_net_syn = args.lr
 
-    for model_eval in model_eval_pool:
-        accs_test = []
-        accs_train = []
-        for it_eval in range(args.num_eval):
-            net_eval = get_network(model_eval, channel, num_classes, im_size, **kwargs).to(args.device)
-            _, acc_train_list, acc_test = evaluate_synset(it_eval, net_eval, images_train, labels_train, testloader, args, sensor_train=sensor_train,)
+    if args.method == 'all':
+        methods = function_map.keys()
+    else:
+        methods = [args.method]
+    
+    for method in methods:
+        print(f"Evaluating method: {method}")
+        images_train, sensor_train, labels_train = function_map[method](images_all, sensor_all, labels_all, indices_class, args.spc, args.unimodal)
+
+        accs_train, accs_test = [], []
+        for eval_run in range(args.num_eval):            
+            fix_seed(args.seed + eval_run)
+
+            net_eval = get_network(args.model, channel, num_classes, im_size, **kwargs).to(args.device)
+            _, acc_train_list, acc_test = evaluate_synset(eval_run, net_eval, images_train, labels_train, testloader, args, sensor_train=sensor_train)
+            accs_train.append(acc_train_list[-1])
             accs_test.append(acc_test)
-            accs_train.append(acc_train_list[-1] if acc_train_list else 0.0)
 
-        accs_test = np.array(accs_test)
-        accs_train = np.array(accs_train)
+        print(accs_train, accs_test)
         print(
-            f"Random baseline ({model_eval}): "
-            f"train acc mean={accs_train.mean():.4f} std={accs_train.std():.4f} | "
-            f"test acc mean={accs_test.mean():.4f} std={accs_test.std():.4f}"
+            f"Train Accuracy mean={np.mean(accs_train):.4f} std={np.std(accs_train):.4f} | "
+            f"Test Accuracy  mean={np.mean(accs_test):.4f}  std={np.std(accs_test):.4f}"
         )
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Baseline methods for coreset comparison')
-
-    parser.add_argument('--method', type=str, default='random', choices=['random'],
-                        help='baseline method')
-
-    parser.add_argument('--dataset', type=str, default='CIFAR10', help='dataset')
-    parser.add_argument('--subset', type=str, default='imagenette',
-                        help='ImageNet subset (only used when --dataset=ImageNet)')
-    parser.add_argument('--model', type=str, default='ConvNet', help='model')
-    parser.add_argument('--res', type=int, default=128, help='resolution for imagenet')
-
-    parser.add_argument('--ipc', type=int, default=1, help='images per class to select')
-
-    parser.add_argument('--eval_mode', type=str, default='S', help='eval_mode, check utils.py for more info')
-    parser.add_argument('--num_eval', type=int, default=5, help='how many networks to evaluate on')
-
-    parser.add_argument('--epoch_eval_train', type=int, default=1000,
-                        help='epochs to train a model with selected data')
-    parser.add_argument('--lr_net', type=float, default=0.01, help='learning rate for evaluation training')
-
-    parser.add_argument('--batch_real', type=int, default=256, help='batch size for real data loader')
-    parser.add_argument('--batch_train', type=int, default=256, help='batch size for training networks')
-
-    parser.add_argument('--dsa', type=str, default='True', choices=['True', 'False'],
-                        help='whether to use differentiable Siamese augmentation')
-    parser.add_argument('--dsa_strategy', type=str, default='color_crop_cutout_flip_scale_rotate',
-                        help='differentiable Siamese augmentation strategy')
-
-    parser.add_argument('--data_path', type=str, default='data', help='dataset path')
-
-    parser.add_argument('--zca', action='store_true', help='do ZCA whitening')
-
-    parser.add_argument('--seed', type=int, default=42, help='set random seed')
-    parser.add_argument('--unimodal', type=str, default='', choices=['', 'image', 'sensor'],
-                        help='unimodal training (only for multimodal datasets)')
-    parser.add_argument('--n_groups', type=int, default=8, help='group norm groups (for MMSConvB)')
-
-    args = parser.parse_args()
+    args = parse_args('baseline')
 
     main(args)
