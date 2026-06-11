@@ -153,6 +153,99 @@ def kcenter_select(indices_class, features_all, spc):
     return selected_indices
 
 
+def gist_select(indices_class, features_all, spc):
+    eps = 0.05
+    alpha = 0.95
+    selected_indices = []
+
+    features = features_all.detach().cpu().numpy() if isinstance(features_all, torch.Tensor) else np.asarray(features_all)
+    features = features.reshape(features.shape[0], -1)
+    features = StandardScaler().fit_transform(features)
+
+    for c, idxs in enumerate(indices_class):
+        class_indices = np.asarray(idxs, dtype=np.int64)
+
+        if len(class_indices) < spc:
+            raise ValueError(f"Not enough samples in class {c} to draw ipc={spc} (found {len(idxs)}).")
+        if spc <= 0:
+            continue
+        if len(class_indices) == spc:
+            selected_indices.extend(class_indices.tolist())
+            continue
+
+        class_features = features[class_indices]
+        pw_dist = cdist(class_features, class_features, metric='euclidean')
+        dmax = float(pw_dist.max())
+
+        if dmax <= np.finfo(float).eps:
+            selected_indices.extend(class_indices[:spc].tolist())
+            continue
+
+        # No utility function is passed in this baseline API, so use a linear
+        # monotone utility: samples closer to the class center are more valuable.
+        center = class_features.mean(axis=0, keepdims=True)
+        center_dist = np.linalg.norm(class_features - center, axis=1)
+        min_center_dist = float(center_dist.min())
+        max_center_dist = float(center_dist.max())
+        center_dist_range = max_center_dist - min_center_dist
+        if center_dist_range <= np.finfo(float).eps:
+            utility = np.ones(len(class_indices), dtype=np.float64)
+        else:
+            utility = 1.0 - (center_dist - min_center_dist) / center_dist_range
+            utility = np.clip(utility, 0.0, 1.0)
+
+        best_chosen = []
+        best_score = -np.inf
+        thresholds = [0.0]
+        scale = 1.0
+        while scale <= 2.0 / eps:
+            thresholds.append(scale * eps * dmax / 2.0)
+            scale *= 1.0 + eps
+
+        for threshold in thresholds:
+            chosen = []
+            min_dist = np.full(len(class_indices), np.inf, dtype=np.float64)
+
+            for _ in range(spc):
+                candidate_mask = min_dist >= threshold
+                if chosen:
+                    candidate_mask[chosen] = False
+                candidates = np.flatnonzero(candidate_mask)
+                if len(candidates) == 0:
+                    break
+
+                best_local = int(candidates[np.argmax(utility[candidates])])
+                chosen.append(best_local)
+                min_dist = np.minimum(min_dist, pw_dist[best_local])
+
+            if not chosen:
+                continue
+
+            if len(chosen) <= 1:
+                div_value = 1.0
+            else:
+                chosen_dist = pw_dist[np.ix_(chosen, chosen)]
+                div_value = float(chosen_dist[np.triu_indices(len(chosen), 1)].min() / dmax)
+            utility_value = float(utility[chosen].sum() / spc)
+            score = alpha * utility_value + (1.0 - alpha) * div_value
+
+            if score > best_score or (np.isclose(score, best_score) and len(chosen) > len(best_chosen)):
+                best_score = score
+                best_chosen = chosen
+
+        if spc >= 2:
+            u, v = np.unravel_index(np.argmax(pw_dist), pw_dist.shape)
+            chosen = [int(u), int(v)]
+            utility_value = float(utility[chosen].sum() / spc)
+            score = alpha * utility_value + (1.0 - alpha)
+            if score > best_score or (np.isclose(score, best_score) and len(chosen) > len(best_chosen)):
+                best_chosen = chosen
+
+        selected_indices.extend(class_indices[best_chosen].tolist())
+
+    return selected_indices
+
+
 def main(args):
     fix_seed(args.seed)
 
@@ -161,6 +254,7 @@ def main(args):
         'random': random_select,
         'kmeans': kmeans_select,
         'kcenter': kcenter_select,
+        'gist': gist_select,
     }
 
     channel, im_size, num_classes, _, _, _, dst_train, _, testloader, class_map = get_dataset(args)
