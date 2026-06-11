@@ -1,5 +1,11 @@
+import os
+
 import numpy as np
 import torch
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from scipy.spatial.distance import cdist
+from dppy.finite_dpps import FiniteDPP
 
 from utils import (
     parse_args,
@@ -9,12 +15,59 @@ from utils import (
     evaluate_synset,
     fix_seed,
 )
+from reparam_module import ReparamModule
 
 
-def select_random_subset(images_all, sensor_all, labels_all, indices_class, spc, unimodal):
-    selected_images = []
-    selected_sensors = []
-    selected_labels = []
+def get_feature_extractor(channel, num_classes, im_size, args, kwargs):
+    buffer_path = os.path.join(args.buffer_path, args.dataset, args.model, 'replay_buffer_0.pt')
+    if not os.path.exists(buffer_path):
+        raise FileNotFoundError(f"Buffer file not found at {buffer_path}. Please make sure buffer files exist.")
+
+    print("Loading feature extractor weights from:", buffer_path)
+
+    # we are using the weights of final iteraton of the first expert as feature extractor
+    weights = torch.load(buffer_path, map_location=args.device)[0][-1]
+
+    model = get_network(args.model, channel, num_classes, im_size, **kwargs)
+    model = ReparamModule(model)
+
+    named_modules = list(model.named_modules())
+    idx = -2
+    while True:
+        feature_layer_name, feature_layer = named_modules[idx]
+        if hasattr(feature_layer, 'out_features'):
+            break
+        idx -= 1
+        if idx < -len(named_modules):
+            raise RuntimeError("No suitable feature layer found in the model.")
+
+    flat_weights = torch.cat([p.detach().reshape(-1) for p in weights], 0).to(args.device)
+    model = model.to(args.device)
+    model.eval()
+
+    features = {}
+
+    def save_features(_module, _inputs, output):
+        if isinstance(output, (tuple, list)):
+            output = output[0]
+        features["value"] = output
+
+    feature_layer.register_forward_hook(save_features)
+
+    def feature_extractor(x):
+        features.clear()
+        with torch.no_grad():
+            model(x, flat_param=flat_weights)
+        if "value" not in features:
+            raise RuntimeError(f"Layer {feature_layer_name} did not produce features.")
+        output = features["value"]
+        return output.flatten(1) if output.ndim > 2 else output
+
+    feature_extractor.layer_name = feature_layer_name
+    return feature_extractor
+
+
+def random_select(indices_class, features_all, spc):
     selected_indices = []
 
     for c, idxs in enumerate(indices_class):
@@ -23,35 +76,96 @@ def select_random_subset(images_all, sensor_all, labels_all, indices_class, spc,
         choice = np.random.choice(idxs, size=spc, replace=False)
         selected_indices.extend(choice)
 
-    # Shuffle to avoid class-ordered batches (DataLoader also shuffles).
-    order = np.random.permutation(len(selected_indices))
+    return selected_indices
 
-    for idx in order:
-        selected_labels.append(labels_all[idx])
-        if unimodal != 'sensor':
-            selected_images.append(images_all[idx])
-        if unimodal != 'image' and unimodal != 'unimodal':
-            selected_sensors.append(sensor_all[idx])
 
-    labels_train = torch.tensor(selected_labels, dtype=torch.long)
-    images_train, sensor_train = None, None
-    if unimodal != 'sensor':
-        images_train = torch.stack(selected_images, dim=0)
-    if unimodal != 'image' and unimodal != 'unimodal':
-        sensor_train = torch.stack(selected_sensors, dim=0)
+def kmeans_select(indices_class, features_all, spc):
+    selected_indices = []
 
-    return images_train, sensor_train, labels_train
+    for c, idxs in enumerate(indices_class):
+        class_indices = np.asarray(idxs, dtype=np.int64)
+
+        if len(class_indices) <= spc:
+            raise ValueError(f"Not enough samples in class {c} to draw ipc={spc} (found {len(idxs)}).")
+
+        class_features = features_all[class_indices]
+        km = KMeans(n_clusters=spc, n_init=10)
+        km.fit(class_features)
+        chosen = []
+        for k in range(spc):
+            cluster_mask = km.labels_ == k
+            if cluster_mask.sum() == 0:
+                continue
+            cluster_features = class_features[cluster_mask]
+            cluster_local_indices = np.where(cluster_mask)[0]
+            distances_to_center = np.linalg.norm(cluster_features - km.cluster_centers_[k], axis=1)
+            chosen.append(cluster_local_indices[distances_to_center.argmin()])
+        selected_indices.extend(class_indices[chosen].tolist())
+
+    return selected_indices
+
+
+def dpp_select(indices_class, features_all, spc):
+    scaler = StandardScaler()
+    feat_n = scaler.fit_transform(features_all)
+
+    selected_indices = []
+    for c, idxs in enumerate(indices_class):
+        class_indices = np.asarray(idxs, dtype=np.int64)
+        cls_feat = feat_n[class_indices]
+
+        if len(cls_feat) <= spc:
+            raise ValueError(f"Not enough samples in class {c} to draw ipc={spc} (found {len(idxs)}).")
+
+        pw_dist = cdist(cls_feat, cls_feat, metric='euclidean')
+        sigma_vals = pw_dist[pw_dist > 0]
+        sigma   = np.median(sigma_vals) if len(sigma_vals) else 1.0
+        L       = np.exp(-pw_dist**2 / (2 * sigma**2))
+
+        dpp = FiniteDPP(kernel_type='likelihood', L=L)
+        dpp.sample_exact_k_dpp(size=spc)
+        chosen = list(dpp.list_of_samples[0])
+
+        selected_indices.extend(class_indices[chosen].tolist())
+
+    return selected_indices
+
+
+def kcenter_select(indices_class, features_all, spc):
+    selected_indices = []
+    for c, idxs in enumerate(indices_class):
+        class_indices = np.asarray(idxs, dtype=np.int64)
+        class_features = features_all[class_indices]
+
+        if len(class_features) <= spc:
+            raise ValueError(f"Not enough samples in class {c} to draw ipc={spc} (found {len(idxs)}).")
+        
+        chosen = [np.random.randint(len(class_features))]
+        dists    = np.full(len(class_features), np.inf)
+        for _ in range(spc - 1):
+            new_d = np.linalg.norm(class_features - class_features[chosen[-1]], axis=1)
+            dists = np.minimum(dists, new_d)
+            dists[chosen] = -np.inf
+            chosen.append(int(np.argmax(dists)))
+        
+        selected_indices.extend(class_indices[chosen].tolist())
+
+    return selected_indices
 
 
 def main(args):
     fix_seed(args.seed)
 
     function_map = {
-        'random': select_random_subset,
+        'DPP': dpp_select,
+        'random': random_select,
+        'kmeans': kmeans_select,
+        'kcenter': kcenter_select,
     }
 
     channel, im_size, num_classes, _, _, _, dst_train, _, testloader, class_map = get_dataset(args)
     images_all, sensor_all, labels_all, indices_class = build_dataset(dst_train, channel, num_classes, class_map, args.unimodal)
+
 
     kwargs = {
         'unimodal': args.unimodal,
@@ -59,6 +173,16 @@ def main(args):
         'n_sensors': getattr(args, 'n_sensors', None),
         'n_sensor_features': getattr(args, 'n_sensor_features', None),
     }
+    feature_extractor = get_feature_extractor(channel, num_classes, im_size, args, kwargs)
+    features_all = []
+    for idx in range(len(labels_all)):
+        img = images_all[idx] if args.unimodal != 'sensor' else None
+        sen = sensor_all[idx] if args.unimodal != 'image' and args.unimodal != 'unimodal' else None
+        input_data = img if img is not None else sen
+        feat = feature_extractor(input_data.unsqueeze(0))
+        features_all.append(feat.cpu().numpy())
+    features_all = np.concatenate(features_all, axis=0)
+
     args.lr_net_syn = args.lr
 
     if args.method == 'all':
@@ -66,9 +190,15 @@ def main(args):
     else:
         methods = [args.method]
     
+    results = {}
+
     for method in methods:
-        print(f"Evaluating method: {method}")
-        images_train, sensor_train, labels_train = function_map[method](images_all, sensor_all, labels_all, indices_class, args.spc, args.unimodal)
+        print(f"\nEvaluating method: {method}")
+        selected_indices = function_map[method](indices_class, features_all, args.spc)
+
+        labels_train = torch.tensor(labels_all[selected_indices], dtype=torch.long)
+        images_train = images_all[selected_indices] if args.unimodal != 'sensor' else None
+        sensor_train = sensor_all[selected_indices] if args.unimodal != 'image' and args.unimodal != 'unimodal' else None
 
         accs_train, accs_test = [], []
         for eval_run in range(args.num_eval):            
@@ -79,11 +209,19 @@ def main(args):
             accs_train.append(acc_train_list[-1])
             accs_test.append(acc_test)
 
-        print(accs_train, accs_test)
+        print('\n')
         print(
             f"Train Accuracy mean={np.mean(accs_train):.4f} std={np.std(accs_train):.4f} | "
             f"Test Accuracy  mean={np.mean(accs_test):.4f}  std={np.std(accs_test):.4f}"
         )
+        print('\n' + '-' * 50)
+
+        results[method] = (np.mean(accs_test), np.std(accs_test))
+
+    if args.method == 'all':
+        print("\nSummary of all methods:")
+        for method, (mean_acc, std_acc) in results.items():
+            print(f"{method}: Test Accuracy mean={mean_acc:.4f} std={std_acc:.4f}")
 
 
 if __name__ == '__main__':

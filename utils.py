@@ -779,10 +779,10 @@ def parse_args(mode):
     parser.add_argument('--name', type=str, default='Run', help='name of wandb run')
     parser.add_argument('--optimizer', type=str, default='SGD', choices=["SGD", "Adam"], help='Optimizer to use for evaluation training. Overrides the optimizer choice from the distill run config if specified.')
     parser.add_argument('--device', type=str, default=default_device, help='device to use for training')
+    parser.add_argument('--train_epochs', type=int, default=50)
 
     if mode == "buffer":
         parser.add_argument('--num_experts', type=int, default=100, help='training iterations')
-        parser.add_argument('--train_epochs', type=int, default=50)
         parser.add_argument('--decay', action='store_true')
         parser.add_argument('--mom', type=float, default=0, help='momentum')
         parser.add_argument('--l2', type=float, default=0, help='l2 regularization')
