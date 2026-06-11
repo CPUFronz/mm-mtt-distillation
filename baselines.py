@@ -218,10 +218,11 @@ def main(args):
 
         results[method] = (np.mean(accs_test), np.std(accs_test))
 
+
     if args.method == 'all':
-        print("\nSummary of all methods:")
+        print("\nSummary of all methods (Test Accuracy):")
         for method, (mean_acc, std_acc) in results.items():
-            print(f"{method}: Test Accuracy mean={mean_acc:.4f} std={std_acc:.4f}")
+            print(f"{method}:".ljust(10) + f"mean={mean_acc:.3f} | std={std_acc:.3f}")
 
 
 if __name__ == '__main__':
