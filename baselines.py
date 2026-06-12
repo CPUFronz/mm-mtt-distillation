@@ -250,9 +250,9 @@ def main(args):
     fix_seed(args.seed)
 
     function_map = {
-        'DPP': dpp_select,
         'random': random_select,
         'kmeans': kmeans_select,
+        'DPP': dpp_select,
         'kcenter': kcenter_select,
         'gist': gist_select,
     }
