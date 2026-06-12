@@ -145,6 +145,39 @@ def get_dataset(args):
         class_names = [os.path.basename(os.path.normpath(folder)) for folder in dst_train.folder]
         class_map = {x: x for x in range(num_classes)}
 
+    elif args.dataset == 'MMCows':
+        args.test_split = 0.2
+        args.image_size = (224, 224)
+
+        df = load_mmcows_data(args)
+
+        scaler = StandardScaler()
+        scaler.fit(df[args.sens_cols])
+
+        cow_ids = sorted(df['cow_id'].unique())
+        num_train_cows = max(1, int(len(cow_ids) * (1 - args.test_split)))
+        train_cows = set(cow_ids[:num_train_cows])
+
+        train_data = df.loc[df['cow_id'].isin(train_cows)].drop(columns=['cow_id'])
+        test_data = df.loc[~df['cow_id'].isin(train_cows)].drop(columns=['cow_id'])
+
+        num_classes = df['behavior'].nunique()
+        dst_train = MMCowsDataset(train_data, scaler, args.sens_cols, num_classes, args.image_size, args.unimodal)
+        dst_test = MMCowsDataset(test_data, scaler, args.sens_cols, num_classes, args.image_size, args.unimodal)
+
+        args.n_sensors = len(args.sens_cols)
+        args.n_sensor_features = 1
+        args.n_input_features = args.n_sensors * args.n_sensor_features
+        args.n_output_features = num_classes
+
+        sample_image = dst_train[0][0][0]
+        channel = sample_image.shape[0]
+        im_size = sample_image.shape[1:]
+        mean = [0.5, 0.5, 0.5]
+        std = [0.5, 0.5, 0.5]
+        class_names = sorted(df['behavior'].unique().astype(str).tolist())
+        class_map = {x: x for x in range(num_classes)}
+
     else:
         exit(f'unknown dataset: {args.dataset}')
 
@@ -1382,3 +1415,179 @@ class Widar_Dataset(Dataset):
         x    = x.reshape(22, 20, 20)
         x    = np.clip(x, -3, 3) / 3.0
         return torch.FloatTensor(x), y
+
+
+def load_mmcows_data(args, root='./data/mmcows/'):
+    path = f'{root}/sensor_data/behavior_labels/individual/*'
+    data = {}
+
+    for f in sorted(glob(path)):
+        cow_id = int(os.path.basename(f).split('_')[0].strip('C'))
+        if cow_id > 10:
+            continue
+
+        label_df = pd.read_csv(f)
+        data[cow_id] = label_df
+
+
+    path = f'{root}/sensor_data/main_data/immu/*'
+    for p in sorted(glob(path)):
+        cow_tag = p.split('/')[-1]
+        cow_id = int(cow_tag.strip('CT'))
+        if cow_id > 10:
+            continue
+
+        tmp_df = pd.read_csv(f'{p}/{cow_tag}_0725.csv')
+        tmp_df['timestamp'] = tmp_df['timestamp'].astype(int)
+        tmp_df = tmp_df.rename(columns=lambda x: 'timestamp' if x == 'timestamp' else f"{path.split('/')[-2]}__{x}")
+        data[cow_id] = pd.merge_asof(data[cow_id], tmp_df, left_on='timestamp', right_on='timestamp', direction='nearest')
+
+
+    path = f'{root}/sensor_data/main_data/pressure/*'
+    for p in sorted(glob(path)):
+        cow_tag = p.split('/')[-1]
+        cow_id = int(cow_tag.strip('CT'))
+        if cow_id > 10:
+            continue
+
+        tmp_df = pd.read_csv(f'{p}/{cow_tag}_0725.csv')
+        tmp_df['timestamp'] = tmp_df['timestamp'].astype(int)
+        tmp_df = tmp_df.rename(columns=lambda x: 'timestamp' if x == 'timestamp' else f"{path.split('/')[-2]}__{x}")
+        data[cow_id] = pd.merge_asof(data[cow_id], tmp_df, left_on='timestamp', right_on='timestamp', direction='nearest')
+
+
+    path = f'{root}/sensor_data/sub_data/head_direction/*'
+    for p in sorted(glob(path)):
+        if os.path.isfile(p):
+            continue
+
+        cow_tag = p.split('/')[-1]
+        cow_id = int(cow_tag.strip('CT'))
+        if cow_id > 10:
+            continue
+
+        tmp_df = pd.read_csv(f'{p}/{cow_tag}_0725.csv')
+        tmp_df['timestamp'] = tmp_df['timestamp'].astype(int)
+        tmp_df = tmp_df.rename(columns=lambda x: 'timestamp' if x == 'timestamp' else f"{path.split('/')[-2]}__{x}")
+        data[cow_id] = pd.merge_asof(data[cow_id], tmp_df, left_on='timestamp', right_on='timestamp', direction='nearest')
+
+
+    path = f'{root}/sensor_data/main_data/uwb/*'
+    for p in sorted(glob(path)):
+        if os.path.isfile(p):
+            continue
+
+        cow_tag = p.split('/')[-1]
+        cow_id = int(cow_tag.strip('CT'))
+        if cow_id > 10:
+            continue
+
+        tmp_df = pd.read_csv(f'{p}/{cow_tag}_0725.csv')
+        tmp_df['timestamp'] = tmp_df['timestamp'].astype(int)
+        tmp_df = tmp_df.rename(columns=lambda x: 'timestamp' if x == 'timestamp' else f"{path.split('/')[-2]}__{x}")
+        data[cow_id] = pd.merge_asof(data[cow_id], tmp_df, left_on='timestamp', right_on='timestamp', direction='nearest')
+
+    df = pd.DataFrame()
+    for k in data.keys():
+        tmp_df = data[k]
+        tmp_df['cow_id'] = k
+        df = pd.concat([df, tmp_df])
+
+    df['behavior'] = df['behavior'].astype(int)
+    df = df.sort_values('timestamp')
+
+
+    # image data
+    path = f'{root}/visual_data/images/0725/cam_1/*.jpg'
+    regex = r"cam_1/(\d+)_"
+    records = []
+
+    for f in glob(path):
+        m = re.search(regex, f)
+
+        records.append({
+            'timestamp': int(m.group(1)),
+            'cam_1': f,
+            'cam_2': f.replace('cam_1', 'cam_2'),
+            'cam_3': f.replace('cam_1', 'cam_3'),
+            'cam_4': f.replace('cam_1', 'cam_4'),
+        })
+
+    img_df = pd.DataFrame(records)
+    img_df = img_df.sort_values('timestamp')
+
+    merged_df = pd.merge_asof(img_df, df, left_on='timestamp', right_on='timestamp')
+    merged_df = merged_df.dropna()
+    merged_df = merged_df.drop(columns=['datetime'])
+
+    args.sens_cols = list(df.columns[3:-1])
+
+    return merged_df
+
+
+class MMCowsDataset(Dataset):
+    def __init__(self, df, scaler, sens_cols, n_classes, image_size=(64, 64), unimodal=''):
+        def _prepare(idx):
+            frame_images = []
+            for cam in ['cam_1', 'cam_2', 'cam_3', 'cam_4']:
+                img_fn = self.dataset.iloc[idx][cam]
+                if not os.path.isfile(img_fn):
+                    PIL_image = Image.new("RGB", self.image_size, (0, 0, 0))
+                else:
+                    PIL_image = Image.open(img_fn)
+                    PIL_image = PIL_image.resize(self.image_size)
+                frame_images.append(PIL_image)
+
+            grid_width  = self.image_size[0] * 2
+            grid_height = self.image_size[1] * 2
+            grid_image  = Image.new("RGB", (grid_width, grid_height))
+
+            grid_image.paste(frame_images[0], (0, 0))
+            grid_image.paste(frame_images[1], (self.image_size[0], 0))
+            grid_image.paste(frame_images[2], (0, self.image_size[1]))
+            grid_image.paste(frame_images[3], (self.image_size[0], self.image_size[1]))
+
+            return idx, self.transform(grid_image)
+
+
+        self.dataset = df
+
+        self.scaler = scaler
+        self.sensor_data_scaled = self.scaler.transform(self.dataset[sens_cols])
+
+        self.image_size = image_size
+        self.transform = transforms.Compose([
+            transforms.Resize(self.image_size),
+            transforms.ToTensor()
+        ])
+        self.unimodal = unimodal
+
+        self.n_classes = n_classes
+
+        self.images = {}
+        with ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
+            futures = [pool.submit(_prepare, idx) for idx, _ in enumerate(self.dataset.iterrows())]
+
+            for fut in as_completed(futures):
+                idx, tensor = fut.result()
+                self.images[idx] = tensor
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        row = self.dataset.iloc[idx]
+
+        if self.unimodal != 'sensor':
+            image = self.images[idx]
+        else:
+            image = torch.zeros((3, self.image_size[0], self.image_size[1]))
+
+        if self.unimodal != 'image':
+            sensor_data = self.sensor_data_scaled[idx , :].astype(np.float32)
+        else:
+            sensor_data = torch.zeros((len(self.scaler.feature_names_in_),))
+        
+        label = row['behavior']
+
+        return (image, sensor_data), label
