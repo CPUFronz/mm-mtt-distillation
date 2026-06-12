@@ -799,7 +799,7 @@ def parse_args(mode):
     default_device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     parser = argparse.ArgumentParser(description='Parameter Processing')
-    parser.add_argument('--dataset', type=str, default='CIFAR10', help='dataset')
+    parser.add_argument('--dataset', type=str, default='CIFAR10', choices=['CIFAR10', 'Widar', 'RaspiCar', 'ActionSense', 'RoboMNIST', 'MMCows'], help='dataset')
     parser.add_argument('--model', type=str, default='ConvNet', help='model')
     parser.add_argument('--lr', type=float, default=0.01, help='learning rate for updating network parameters' if mode == 'buffer' else 'initialization for synthetic learning rate')
     parser.add_argument('--batch_size', type=int, default=256, help='batch size for training networks')
