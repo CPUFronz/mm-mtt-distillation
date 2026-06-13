@@ -77,10 +77,10 @@ def main(args, trial=None):
 
             for e in range(args.train_epochs):
 
-                train_loss, train_acc = epoch("train", dataloader=trainloader, net=teacher_net, optimizer=teacher_optim, criterion=criterion, args=args, aug=aug)
-                test_loss, test_acc = epoch("test", dataloader=testloader, net=teacher_net, optimizer=None, criterion=criterion, args=args, aug=False)
+                train_loss, train_acc = epoch("train", dataloader=trainloader, net=teacher_net, optimizer=teacher_optim, criterion=criterion, args=args, augs=aug)
+                test_loss, test_acc = epoch("test", dataloader=testloader, net=teacher_net, optimizer=None, criterion=criterion, args=args, augs=False)
 
-                print("Itr: {}\tEpoch: {}\tTrain Acc: {}\tTest Acc: {}".format(it, e, train_acc, test_acc))
+                print(f'Itr: {it}\tEpoch: {e}\tTrain Acc: {train_acc:.4f}\tTest Acc: {test_acc:.4f}')
 
                 timestamps.append([p.detach().cpu() for p in teacher_net.parameters()])
                 

@@ -340,7 +340,7 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwar
     return net
 
 
-def epoch(mode, dataloader, net, optimizer, criterion, args, aug):
+def epoch(mode, dataloader, net, optimizer, criterion, args, augs):
     loss_avg, acc_avg, num_exp = 0, 0, 0
     net = net.to(args.device)
 
@@ -358,9 +358,7 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, aug):
             img = img.float().to(args.device)
             sen = sen.float().to(args.device)
             lab = datum[1].long().to(args.device)
-
-        if aug:
-            img = aug(img)
+      
 
         n_b = lab.shape[0]
 
@@ -417,12 +415,12 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
         aug = DiffAugment(args.augmentations)
 
     for ep in tqdm.tqdm(range(Epoch+1)):
-        loss_train, acc_train = epoch('train', trainloader, net, optimizer, criterion, args, aug=aug)
+        loss_train, acc_train = epoch('train', trainloader, net, optimizer, criterion, args, augs=aug)
         acc_train_list.append(acc_train)
         loss_train_list.append(loss_train)
         if ep == Epoch or training_logs:
             with torch.no_grad():
-                loss_test, acc_test = epoch('test', testloader, net, optimizer, criterion, args, aug=False)
+                loss_test, acc_test = epoch('test', testloader, net, optimizer, criterion, args, augs=False)
 
             if training_logs:
                 for param_group in optimizer.param_groups:
@@ -720,7 +718,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.calibration import LabelEncoder
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from sklearn.metrics import f1_score
 from PIL import Image
 
 
@@ -854,7 +851,7 @@ def build_dataset(dst_train, channel, num_classes, class_map, unimodal):
     images_all = []
     sensor_all = []
     labels_all = []
-    indices_class = [[] for c in range(num_classes)]
+    indices_class = [[] for _ in range(num_classes)]
     print("BUILDING DATASET")
     for i in tqdm.tqdm(range(len(dst_train))):
         if unimodal == 'unimodal':
@@ -879,7 +876,7 @@ def build_dataset(dst_train, channel, num_classes, class_map, unimodal):
         sensor_all = torch.zeros_like(sensor_all)
 
     for c in range(num_classes):
-        print('class c = %d: %d real images'%(c, len(indices_class[c])))
+        print('class c = %d: %d real samples'%(c, len(indices_class[c])))
 
     for ch in range(channel):
         print('real images channel %d, mean = %.4f, std = %.4f'%(ch, torch.mean(images_all[:, ch]), torch.std(images_all[:, ch])))
@@ -1579,12 +1576,12 @@ class MMCowsDataset(Dataset):
         row = self.dataset.iloc[idx]
 
         if self.unimodal != 'sensor':
-            image = self.images[idx]
+            image = torch.Tensor(self.images[idx])
         else:
             image = torch.zeros((3, self.image_size[0], self.image_size[1]))
 
         if self.unimodal != 'image':
-            sensor_data = self.sensor_data_scaled[idx , :].astype(np.float32)
+            sensor_data = torch.Tensor(self.sensor_data_scaled[idx , :].astype(np.float32))
         else:
             sensor_data = torch.zeros((len(self.scaler.feature_names_in_),))
         
