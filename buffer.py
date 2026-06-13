@@ -16,7 +16,9 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 def main(args, trial=None):
     fix_seed(args.seed)
 
-    aug = DiffAugment(args.augmentations)
+    aug = None
+    if args.augmentations:
+        aug = DiffAugment(args.augmentations)
 
     channel, im_size, num_classes, class_names, mean, std, dst_train, dst_test, testloader, class_map = get_dataset(args)
 

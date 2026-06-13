@@ -349,11 +349,12 @@ def main(args):
             x = syn_images[these_indices]
             this_y = y_hat[these_indices]
 
-            if args.augmentations:
-                x = augs(x)
-
             if args.unimodal != 'unimodal':
                 x = (x, syn_sensor[these_indices])
+
+            if args.augmentations:
+                    is_widar = args.dataset == 'Widar'
+                    x = augs(x, args.unimodal, is_widar)
 
             if args.distributed:
                 forward_params = student_params[-1].unsqueeze(0).expand(torch.cuda.device_count(), -1)

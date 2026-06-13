@@ -351,21 +351,22 @@ def epoch(mode, dataloader, net, optimizer, criterion, args, augs):
 
     for i_batch, datum in enumerate(dataloader):
         if args.unimodal == 'unimodal':
-            img = datum[0].float().to(args.device)
+            x = datum[0].float().to(args.device)
             lab = datum[1].long().to(args.device)
         else:
             img, sen = datum[0]
             img = img.float().to(args.device)
             sen = sen.float().to(args.device)
+            x = (img, sen)
             lab = datum[1].long().to(args.device)
       
+        if augs:
+            is_widar = args.dataset == 'Widar'
+            x = augs(x, args.unimodal, is_widar)
 
         n_b = lab.shape[0]
 
-        if args.unimodal == 'unimodal':
-            output = net(img)
-        else:
-            output = net((img, sen))
+        output = net(x)
         loss = criterion(output, lab)
 
         acc = np.sum(np.equal(np.argmax(output.cpu().data.numpy(), axis=-1), lab.cpu().data.numpy()))
@@ -456,62 +457,157 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
 # added by Shadi and Franz
 #####################################################################
 
+# augmentations working on image + sensor start with genaral_
+# augmentations only for image data start with image_
+# augmentations only for sensor data start with sensor_
+# augmentations only for Widar data start with widar_
+AUG_DEFAULTS = {
+    # Parameter for all data modalities
+    'general_noise': 0.03,              # Gaussian noise std
+    # Sensor only params
+    'sensor_magnitude': 0.1,           # random scaling factor for sensor magnitude
+    'sensor_channel_dropout': 0.05,    # probability of dropping a sensor channel
+    
+    # Image only params
+    'image_rotate': 15.0,              # rotation ratio for image augmentations
+    'image_brightness': 1.0,           # brightness ratio for image augmentations
+    'image_saturation': 2.0,           # saturation ratio for image augmentations
+    'image_contrast': 0.5,             # contrast ratio for image augmentations
+    
+    # Image and Sensor (only operating on the Widar velocity) params
+    'image_flip_h': 0.5,               # probability of flipping x-axis
+    'image_flip_w': 0.5,               # probability of flipping y-axis
+    'image_scale': 1.1,                # image scaling ratio
+    'image_crop': 0.125,               # image crop ratio
+    'image_cutout': 0.5,               # image cutout size (fraction of H,W)
+    
+    # Temporal params (only for Widar data)
+    'widar_temporal_shift': 4,           # max frames to roll +/- along T
+    'widar_temporal_cutout': 0.05,     # fraction of T frames to zero out
+    'widar_temporal_flip': 0.5,         # probatility of reversing the sequence
+
+}
+
 class DiffAugment:
     def __init__(self, param):
         self.param = param
 
-        self.registry = {
-            'flip_h_prob':              self.rand_flip_h,
-            'flip_w_prob':              self.rand_flip_w,
-            'velocity_scale_ratio':     self.rand_scale_velocity,
-            'velocity_translate_ratio': self.rand_translate_velocity,
-            'velocity_cutout_ratio':    self.rand_cutout_velocity,
-            'temporal_shift_max':       self.rand_temporal_shift,
-            'temporal_cutout_ratio':    self.rand_temporal_cutout,
-            'temporal_flip_prob':       self.rand_temporal_flip,
-            'amplitude':                self.rand_amplitude,
-            'noise':                    self.rand_noise,
-            'image_rotate':             self.rand_image_rotate,
-            'image_brightness':         self.rand_brightness,
-            'image_saturation':         self.rand_saturation,
-            'image_contrast':           self.rand_contrast,
-            # those image augmentations are already implemented, just with a different name
-            'image_scale':              self.rand_scale_velocity,
-            'image_crop':               self.rand_translate_velocity,
-            'image_cutout':             self.rand_cutout_velocity,
+        self.registry = {            
+            'general_noise':                   self.rand_noise,
+            
+            'sensor_magnitude':        self.rand_magnitude,
+            'sensor_channel_dropout':  self.rand_channel_dropout,
+            
+            'image_rotate':            self.rand_rotate_image,
+            'image_brightness':        self.rand_brightness_image,
+            'image_saturation':        self.rand_saturation_image,
+            'image_contrast':          self.rand_contrast_image,
+            
+            'image_flip_h':            self.rand_flip_h_image,
+            'image_flip_w':            self.rand_flip_w_image,
+            'image_scale':             self.rand_scale_image,
+            'image_crop':              self.rand_translate_image,
+            'image_cutout':            self.rand_cutout_image,
+
+            'widar_temporal_shift':    self.rand_temporal_shift,
+            'widar_temporal_cutout':   self.rand_temporal_cutout,
+            'widar_temporal_flip':     self.rand_temporal_flip,
         }
 
-    def __call__(self, x):
-        augmentation = np.random.choice(list(self.param.keys()))
-        x = self.registry[augmentation](x, self.param[augmentation])
-        return x.contiguous()
+    def __call__(self, x, unimodal, is_widar=False):
+        image_args = [key for key in self.param.keys() if key.startswith('image_') or key.startswith('general_')]
+        total_num_image_augmentations = len(image_args)
+        num_image_augmentations = np.random.randint(0, total_num_image_augmentations)
+        selected_image_args = np.random.choice(image_args, size=num_image_augmentations, replace=False)
 
-    def rand_flip_h(self, x, prob_flip_h):
-        """
-        Flip x-velocity axis (H, dim=2).
-        Physical meaning: mirrors the gesture left ↔ right.
-        ⚠ Skip if 'slide_left' and 'slide_right' are different class labels.
-        """
+        # unimodal only works on images
+        if unimodal == 'unimodal':
+            for img_arg in selected_image_args:
+                x = self.registry[img_arg](x, self.param[img_arg])
+
+            if is_widar:
+                widar_args = [key for key in self.param.keys() if key.startswith('widar_')]
+                total_num_widar_augmentations = len(widar_args)
+                num_widar_augmentations = np.random.randint(0, total_num_widar_augmentations)
+                selected_widar_args = np.random.choice(widar_args, size=num_widar_augmentations, replace=False)
+                for widar_arg in selected_widar_args:
+                    x = self.registry[widar_arg](x, self.param[widar_arg])
+        else:
+            x = list(x)
+            # augment only image data
+            if unimodal != 'sensor':
+                for img_arg in selected_image_args:
+                    x[0] = self.registry[img_arg](x[0], self.param[img_arg])
+    
+            # augment only sensor data
+            if unimodal != 'image':
+                sensor_args = [key for key in self.param.keys() if key.startswith('sensor_') or key.startswith('general_')]
+                total_num_sensor_augmentations = len(sensor_args)
+                num_sensor_augmentations = np.random.randint(0, total_num_sensor_augmentations)
+                selected_sensor_args = np.random.choice(sensor_args, size=num_sensor_augmentations, replace=False)
+                for sen_arg in selected_sensor_args:
+                    x[1] = self.registry[sen_arg](x[1], self.param[sen_arg])
+
+            x = tuple(x)
+
+        return x
+    
+
+    def rand_noise(self, x, noise):
+        return x + noise * torch.randn_like(x)
+
+
+    def rand_magnitude(self, x, scale_factor):
+        scale = torch.rand_like(x) * scale_factor
+        return x * scale
+
+
+    def rand_channel_dropout(self, x, dropout):
+        keep_mask = torch.rand(x.size(0), x.size(1), device=x.device) > dropout
+        return x * keep_mask
+
+
+    def rand_rotate_image(self, x, ratio): # [-180, 180], 90: anticlockwise 90 degree
+        theta = (torch.rand(x.shape[0]) - 0.5) * 2 * ratio / 180 * float(np.pi)
+        theta = [[[torch.cos(theta[i]), torch.sin(-theta[i]), 0],
+            [torch.sin(theta[i]), torch.cos(theta[i]),  0],]  for i in range(x.shape[0])]
+        theta = torch.tensor(theta, dtype=torch.float)
+        grid = F.affine_grid(theta, x.shape, align_corners=True).to(x.device)
+        x = F.grid_sample(x, grid, align_corners=True)
+        return x
+
+
+    def rand_brightness_image(self, x, ratio):
+        randb = torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device)
+        x = x + (randb - 0.5)*ratio
+        return x
+
+
+    def rand_saturation_image(self, x, ratio):
+        x_mean = x.mean(dim=1, keepdim=True)
+        rands = torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device)
+        x = (x - x_mean) * (rands * ratio) + x_mean
+        return x
+
+
+    def rand_contrast_image(self, x, ratio):
+        x_mean = x.mean(dim=[1, 2, 3], keepdim=True)
+        randc = torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device)
+        x = (x - x_mean) * (randc + ratio) + x_mean
+        return x
+
+
+    def rand_flip_h_image(self, x, prob_flip_h):
         randf = torch.rand(x.size(0), 1, 1, 1, device=x.device)
         return torch.where(randf < prob_flip_h, x.flip(2), x)
 
 
-    def rand_flip_w(self, x, prob_flip_w):
-        """
-        Flip y-velocity axis (W, dim=3).
-        Physical meaning: mirrors the gesture forward ↔ backward.
-        """
+    def rand_flip_w_image(self, x, prob_flip_w):
         randf = torch.rand(x.size(0), 1, 1, 1, device=x.device)
         return torch.where(randf < prob_flip_w, x.flip(3), x)
 
 
-    def rand_scale_velocity(self,x, ratio):
-        """
-        Scale velocity bins via affine grid (H, W).
-        Physical meaning: simulates different body-to-antenna distances
-        (further away → compressed velocity distribution).
-        Note: affine_grid treats T as 'channels' and scales H,W identically ✓
-        """
+    def rand_scale_image(self,x, ratio):
         sx = torch.rand(x.shape[0]) * (ratio - 1.0 / ratio) + 1.0 / ratio
         sy = torch.rand(x.shape[0]) * (ratio - 1.0 / ratio) + 1.0 / ratio
         theta = [[[sx[i], 0,    0],
@@ -521,11 +617,7 @@ class DiffAugment:
         return F.grid_sample(x, grid, align_corners=True)
     
 
-    def rand_translate_velocity(self, x, ratio):
-        """
-        Translate in velocity space (H, W) with wrap-around padding.
-        Physical meaning: slightly different body orientation relative to antennas.
-        """
+    def rand_translate_image(self, x, ratio):
         shift_h  = int(x.size(2) * ratio + 0.5)
         shift_w  = int(x.size(3) * ratio + 0.5)
         trans_h = torch.randint(-shift_h, shift_h + 1, size=[x.size(0), 1, 1], device=x.device)
@@ -544,13 +636,9 @@ class DiffAugment:
         # [B, T, H_pad, W_pad] → permute → [B, H_pad, W_pad, T] → index → permute back
         x = x_pad.permute(0, 2, 3, 1).contiguous()[grid_b, grid_h, grid_w].permute(0, 3, 1, 2)
         return x
-    
 
-    def rand_cutout_velocity(self, x, ratio_cutout):
-        """
-        Zero out a rectangular patch in velocity space (H, W) for all T frames.
-        Physical meaning: simulates partial antenna occlusion or dead velocity bins.
-        """
+
+    def rand_cutout_image(self, x, ratio_cutout):
         cutout_h = int(x.size(2) * ratio_cutout + 0.5)
         cutout_w = int(x.size(3) * ratio_cutout + 0.5)
         off_h = torch.randint(0, x.size(2) + (1 - cutout_h % 2),
@@ -571,16 +659,7 @@ class DiffAugment:
         return x * mask.unsqueeze(1)  # broadcast mask over all T frames
 
 
-    # ─────────────────────────────────────────────────────────────────────────────
-    #  TEMPORAL AUGMENTATIONS  (operate on T=dim1)
-    # ─────────────────────────────────────────────────────────────────────────────
-
     def rand_temporal_shift(self, x, max_temporal_shift):
-        """
-        Key insight: reshape T to the spatial WIDTH dimension,
-        then affine_grid + grid_sample gives continuous bilinear shift along T.
-        Gradient flows smoothly back to x_syn through interpolated frames. ✓
-        """
         B, T, H, W = x.shape
 
         # Normalized continuous shift in [-1, 1] space
@@ -610,11 +689,6 @@ class DiffAugment:
 
 
     def rand_temporal_flip(self, x, prob_temporal_flip):
-        """
-        Reverse the T axis (time-reverse the gesture).
-        Physical meaning: reversed motion — only valid if class label is symmetric
-        (e.g. 'push' reversed ≠ 'push', so use carefully or only for symmetric gestures).
-        """
         randf = torch.rand(x.size(0), device=x.device)
         # flip(1) reverses T; stack keeps gradient
         flipped = x.flip(1)
@@ -623,11 +697,6 @@ class DiffAugment:
 
 
     def rand_temporal_cutout(self, x, ratio_temporal_cutout):
-        """
-        Zero out a contiguous block of T frames.
-        Physical meaning: missing CSI packets / person momentarily still.
-        x.clone() ensures gradient flows through non-zeroed frames.
-        """
         T          = x.size(1)
         cutout_len = max(1, int(T * ratio_temporal_cutout))
         offset = torch.randint(0, T - cutout_len + 1,
@@ -637,61 +706,6 @@ class DiffAugment:
         for i in range(x.size(0)):
             mask[i, offset[i]: offset[i] + cutout_len] = 0
         return x * mask
-
-
-    # ─────────────────────────────────────────────────────────────────────────────
-    #  AMPLITUDE AUGMENTATIONS  (operate on all dims)
-    # ─────────────────────────────────────────────────────────────────────────────
-
-    def rand_amplitude(self, x, amplitude):
-        """
-        Multiply entire BVP map by a per-sample random scalar.
-        Physical meaning: signal strength variation due to distance / environment.
-        """
-        scale = (torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device)
-                * amplitude + (1.0 - amplitude / 2))
-        return x * scale
-
-
-    def rand_noise(self, x, noise):
-        """
-        Add per-sample Gaussian noise.
-        Physical meaning: multipath interference and thermal noise in CSI.
-        """
-        return x + noise * torch.randn_like(x)
-
-    # ─────────────────────────────────────────────────────────────────────────────
-    #  IMAGE AUGMENTATIONS
-    # ─────────────────────────────────────────────────────────────────────────────
-
-    def rand_image_rotate(self, x, ratio): # [-180, 180], 90: anticlockwise 90 degree
-        theta = (torch.rand(x.shape[0]) - 0.5) * 2 * ratio / 180 * float(np.pi)
-        theta = [[[torch.cos(theta[i]), torch.sin(-theta[i]), 0],
-            [torch.sin(theta[i]), torch.cos(theta[i]),  0],]  for i in range(x.shape[0])]
-        theta = torch.tensor(theta, dtype=torch.float)
-        grid = F.affine_grid(theta, x.shape, align_corners=True).to(x.device)
-        x = F.grid_sample(x, grid, align_corners=True)
-        return x
-
-    
-    def rand_brightness(self, x, ratio):
-        randb = torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device)
-        x = x + (randb - 0.5)*ratio
-        return x
-    
-
-    def rand_saturation(self, x, ratio):
-        x_mean = x.mean(dim=1, keepdim=True)
-        rands = torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device)
-        x = (x - x_mean) * (rands * ratio) + x_mean
-        return x
-    
-
-    def rand_contrast(self, x, ratio):
-        x_mean = x.mean(dim=[1, 2, 3], keepdim=True)
-        randc = torch.rand(x.size(0), 1, 1, 1, dtype=x.dtype, device=x.device)
-        x = (x - x_mean) * (randc + ratio) + x_mean
-        return x
 
 
 #####################################################################
@@ -724,26 +738,6 @@ from PIL import Image
 SENS_COLS_CAR = ['gyro_x', 'gyro_y', 'gyro_z', 'accel_x', 'accel_y', 'accel_z', 'tof']
 NUM_STEERING_ANGLES = 11
 ACTIONSENSE_SAMPLES_PER_LABEL = 2500
-
-AUG_DEFAULTS = {
-    'flip_h_prob': 0.5,                # P(flip x-velocity axis) - left/right gesture
-    'flip_w_prob': 0.5,                # P(flip y-velocity axis) - fwd/back gesture
-    'velocity_scale_ratio': 1.1,       # velocity bin scaling ratio
-    'velocity_translate_ratio': 0.125, # velocity-space translation ratio
-    'velocity_cutout_ratio': 0.5,      # velocity-space cutout size (fraction of H,W)
-    # Temporal params
-    'temporal_shift_max': 4,           # max frames to roll +/- along T
-    'temporal_cutout_ratio': 0.05,     # fraction of T frames to zero out
-    'temporal_flip_prob': 0.5,         # P(reverse time axis)
-    # Amplitude params
-    'amplitude': 0.3,                  # uniform scale in [1 - amp/2, 1 + amp/2]
-    'noise': 0.03,                     # Gaussian noise std,
-    # Image params
-    'image_rotate': 15.0,              # rotation ratio for image augmentations
-    'image_brightness': 1.0,           # brightness ratio for image augmentations
-    'image_saturation': 2.0,           # saturation ratio for image augmentations
-    'image_contrast': 0.5              # contrast ratio for image augmentations
-}
 
 
 def fix_seed(seed):
@@ -843,6 +837,14 @@ def parse_args(mode):
     args = parser.parse_args()
     if args.model not in ['MMSConvB', 'Perceiver']:
         args.unimodal = 'unimodal'
+
+    for k in args.augmentations:
+        if k.startswith('image_') and args.unimodal == 'sensor':
+            print(f"Warning: Image augmentation '{k}' will be ignored for unimodal sensor data.")
+        elif k.startswith('sensor_') and args.unimodal == 'image':
+            print(f"Warning: Sensor augmentation '{k}' will be ignored for unimodal image data.")
+        elif k.startswith('widar_') and args.dataset != 'Widar':
+            print(f"Warning: Widar only augmentation '{k}' will be ignored for non-Widar dataset.")
     
     return args
 
