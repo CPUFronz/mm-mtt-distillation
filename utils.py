@@ -39,9 +39,6 @@ def get_dataset(args):
 
         df = load_raspicar_data(args)
 
-        scaler = StandardScaler()
-        scaler.fit(df[args.sens_cols])
-
         channel = 3
         im_size = args.image_size
         # mean and std are in for all added datasets, but not used
@@ -49,8 +46,8 @@ def get_dataset(args):
         std = [0.1729, 0.1907, 0.2188]
                                                                                 
         train_data, test_data = train_test_split(df, test_size=args.test_split, random_state=args.seed)
-        dst_train = RaspiCarDataset(train_data, scaler, args.sens_cols, args.image_size, args.unimodal)
-        dst_test = RaspiCarDataset(test_data, scaler, args.sens_cols, args.image_size, args.unimodal)
+        dst_train = RaspiCarDataset(train_data, args.sens_cols, args.image_size, args.unimodal)
+        dst_test = RaspiCarDataset(test_data, args.sens_cols, args.image_size, args.unimodal)
 
         args.n_sensors = len(SENS_COLS_CAR)
         args.n_sensor_features = 9 # 9 = 1 sensor value + 8 statistical sensor features
@@ -75,16 +72,13 @@ def get_dataset(args):
 
         args.sens_cols = df.columns.drop(['label', 'subject', 'video_id', 'video_frame'])
 
-        scaler = StandardScaler()
-        scaler.fit(df[args.sens_cols])
-
         encoder = LabelEncoder()
         encoder.fit(df['label'])
         df['label'] = encoder.transform(df['label'])
 
         train_data, test_data = train_test_split(df, test_size=args.test_split, random_state=args.seed)
-        dst_train = ActionSenseDataset(train_data, images, scaler, args.sens_cols, args.image_size, args.unimodal)
-        dst_test = ActionSenseDataset(test_data, images, scaler, args.sens_cols, args.image_size, args.unimodal)
+        dst_train = ActionSenseDataset(train_data, images, args.sens_cols, args.image_size, args.unimodal)
+        dst_test = ActionSenseDataset(test_data, images, args.sens_cols, args.image_size, args.unimodal)
 
         args.n_sensors = len(args.sens_cols)
         args.n_sensor_features = 1
@@ -109,13 +103,10 @@ def get_dataset(args):
 
         args.sens_cols = df.columns.drop(['label', 'image_idx'])
 
-        scaler = StandardScaler()
-        scaler.fit(df[args.sens_cols])
-
         train_data, test_data = train_test_split(df, test_size=args.test_split, random_state=args.seed)
 
-        dst_train = RoboMNISTDataset(train_data, images, scaler, args.sens_cols, args.unimodal)
-        dst_test = RoboMNISTDataset(test_data, images, scaler, args.sens_cols, args.unimodal)
+        dst_train = RoboMNISTDataset(train_data, images, args.sens_cols, args.unimodal)
+        dst_test = RoboMNISTDataset(test_data, images, args.sens_cols, args.unimodal)
 
         args.n_sensors = len(args.sens_cols)
         args.n_sensor_features = 1
@@ -151,9 +142,6 @@ def get_dataset(args):
 
         df = load_mmcows_data(args)
 
-        scaler = StandardScaler()
-        scaler.fit(df[args.sens_cols])
-
         cow_ids = sorted(df['cow_id'].unique())
         num_train_cows = max(1, int(len(cow_ids) * (1 - args.test_split)))
         train_cows = set(cow_ids[:num_train_cows])
@@ -162,8 +150,8 @@ def get_dataset(args):
         test_data = df.loc[~df['cow_id'].isin(train_cows)].drop(columns=['cow_id'])
 
         num_classes = df['behavior'].nunique()
-        dst_train = MMCowsDataset(train_data, scaler, args.sens_cols, num_classes, args.image_size, args.unimodal)
-        dst_test = MMCowsDataset(test_data, scaler, args.sens_cols, num_classes, args.image_size, args.unimodal)
+        dst_train = MMCowsDataset(train_data, args.sens_cols, num_classes, args.image_size, args.unimodal)
+        dst_test = MMCowsDataset(test_data, args.sens_cols, num_classes, args.image_size, args.unimodal)
 
         args.n_sensors = len(args.sens_cols)
         args.n_sensor_features = 1
@@ -950,12 +938,12 @@ def load_raspicar_data(args, root='./data/raspicar/'):
 
 
 class RaspiCarDataset(Dataset):
-    def __init__(self, df, scaler, sens_cols, image_size=(64, 64), unimodal=''):
+    def __init__(self, df, sens_cols, image_size=(64, 64), unimodal=''):
         self.dataset = df
         self.n_classes = NUM_STEERING_ANGLES
 
-        self.scaler = scaler
-        self.sensor_data_scaled = self.scaler.transform(self.dataset[sens_cols])
+        self.scaler = StandardScaler()
+        self.sensor_data_scaled = self.scaler.fit_transform(self.dataset[sens_cols]).astype(np.float32)
 
         self.image_size = image_size        
         self.transform = transforms.Compose([
@@ -979,7 +967,7 @@ class RaspiCarDataset(Dataset):
             image = torch.zeros((3, self.image_size[0], self.image_size[1]))
 
         if self.unimodal != 'image':
-            sensor_data = torch.Tensor(self.sensor_data_scaled[idx , :].astype(np.float32))
+            sensor_data = torch.from_numpy(self.sensor_data_scaled[idx, :])
         else:
             sensor_data = torch.zeros((len(self.scaler.feature_names_in_),))
 
@@ -1107,7 +1095,7 @@ def load_actionsense_data(args, root='./data/actionsense/'):
 
 
 class ActionSenseDataset(Dataset):
-    def __init__(self, df, video_frames, scaler, sens_cols, image_size=(64, 64), unimodal=''):
+    def __init__(self, df, video_frames, sens_cols, image_size=(64, 64), unimodal=''):
         df = df.reset_index(drop=True)
         self.video_frames = video_frames
         self.image_size = image_size
@@ -1119,7 +1107,8 @@ class ActionSenseDataset(Dataset):
         self.labels = torch.as_tensor(df['label'].to_numpy(), dtype=torch.long)
 
         self.sens_cols = sens_cols
-        sensor_np = scaler.transform(df[self.sens_cols]).astype(np.float32)
+        self.scaler = StandardScaler()
+        sensor_np = self.scaler.fit_transform(df[self.sens_cols]).astype(np.float32)
         self.sensor_data = torch.from_numpy(sensor_np)
 
         # Cache frame references to reduce dict lookups during iteration
@@ -1359,13 +1348,13 @@ def load_robomnist_data(args, root='./data/robomnist/'):
 
 
 class RoboMNISTDataset(Dataset):
-    def __init__(self, df, images, scaler, sens_cols, unimodal=''):        
+    def __init__(self, df, images, sens_cols, unimodal=''):        
         self.unimodal = unimodal
         self.sens_cols = sens_cols
-        self.scaler = scaler
+        self.scaler = StandardScaler()
 
         self.df = df.reset_index(drop=True)
-        self.sensor_data_scaled = self.scaler.transform(df[self.sens_cols])
+        self.sensor_data_scaled = self.scaler.fit_transform(self.df[self.sens_cols]).astype(np.float32)
         self.images = images
 
         self.transform = transforms.Compose([
@@ -1385,7 +1374,7 @@ class RoboMNISTDataset(Dataset):
             image = torch.zeros((3, sample_image.shape[0], sample_image.shape[1]))
 
         if self.unimodal != 'image':
-            sensor_data = torch.Tensor(self.sensor_data_scaled[idx , :].astype(np.float32))
+            sensor_data = torch.from_numpy(self.sensor_data_scaled[idx, :])
         else:
             sensor_data = torch.zeros((len(self.scaler.feature_names_in_),))
 
@@ -1525,7 +1514,7 @@ def load_mmcows_data(args, root='./data/mmcows/'):
 
 
 class MMCowsDataset(Dataset):
-    def __init__(self, df, scaler, sens_cols, n_classes, image_size=(64, 64), unimodal=''):
+    def __init__(self, df, sens_cols, n_classes, image_size=(64, 64), unimodal=''):
         def _prepare(idx):
             frame_images = []
             for cam in ['cam_1', 'cam_2', 'cam_3', 'cam_4']:
@@ -1551,8 +1540,8 @@ class MMCowsDataset(Dataset):
 
         self.dataset = df
 
-        self.scaler = scaler
-        self.sensor_data_scaled = self.scaler.transform(self.dataset[sens_cols])
+        self.scaler = StandardScaler()
+        self.sensor_data_scaled = self.scaler.fit_transform(self.dataset[sens_cols]).astype(np.float32)
 
         self.image_size = image_size
         self.transform = transforms.Compose([
@@ -1583,7 +1572,7 @@ class MMCowsDataset(Dataset):
             image = torch.zeros((3, self.image_size[0], self.image_size[1]))
 
         if self.unimodal != 'image':
-            sensor_data = torch.Tensor(self.sensor_data_scaled[idx , :].astype(np.float32))
+            sensor_data = torch.from_numpy(self.sensor_data_scaled[idx, :])
         else:
             sensor_data = torch.zeros((len(self.scaler.feature_names_in_),))
         
