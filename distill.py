@@ -132,7 +132,11 @@ def main(args):
     if args.data_init == 'real':
         for c in range(num_classes):
             class_slice = slice(c * args.spc, (c + 1) * args.spc)
-            class_indices = np.random.permutation(indices_class[c])[:args.spc]
+            class_indices_c = indices_class[c]
+            if args.spc > len(class_indices_c):
+                class_indices = np.random.choice(class_indices_c, args.spc, replace=True)
+            else:
+                class_indices = np.random.permutation(class_indices_c)[:args.spc]
             image_syn[class_slice] = images_all[class_indices]
             if args.unimodal != 'unimodal' and args.unimodal != 'image':
                 sensor_syn[class_slice] = sensor_all[class_indices]
