@@ -63,7 +63,7 @@ def get_loggable_images(images):
     return images.index_select(1, channel_idx)
 
 
-def main(args):
+def main(args, trial=None):
     fix_seed(args.seed)
 
     if args.max_experts is not None and args.max_files is not None:
@@ -88,7 +88,8 @@ def main(args):
         project="DatasetDistillation",
         job_type="CleanRepo",
         config=args,
-        name=args.name
+        name=args.name,
+        reinit=True,
     )
 
     args = type('', (), {})()
@@ -249,10 +250,16 @@ def main(args):
                     is_best = True
                 print('Evaluate %d random %s, mean = %.4f std = %.4f\n-------------------------'%(len(accs_test), model_eval, acc_test_mean, acc_test_std))
                 
-                wandb.log({'Accuracy/': acc_test_mean}, step=it)
-                wandb.log({'Max_Accuracy/': best_acc[model_eval]}, step=it)
-                wandb.log({'Std/': acc_test_std}, step=it)
-                wandb.log({'Max_Std/': best_std[model_eval]}, step=it)
+                wandb.log({'Accuracy': acc_test_mean}, step=it)
+                wandb.log({'Max_Accuracy': best_acc[model_eval]}, step=it)
+                wandb.log({'Std': acc_test_std}, step=it)
+                wandb.log({'Max_Std': best_std[model_eval]}, step=it)
+
+                if trial is not None:
+                    trial.report(acc_test_mean, step=it)
+                    if trial.should_prune():
+                        import optuna
+                        raise optuna.exceptions.TrialPruned()
 
 
         if it in eval_iterations:
@@ -394,8 +401,60 @@ def main(args):
 
     wandb.finish()
 
+    return float(max(best_acc.values()))
+
 
 if __name__ == '__main__':
     args = parse_args('distill')
 
-    main(args)
+    if args.optuna_trials > 0:
+        args.wandb_mode = 'disabled'
+
+        import optuna
+
+        # TODO: bei exception weiter machen
+
+        search_space = {
+            'lr_img': [1, 10, 100, 1000],
+            'lr_sens': [0.01, 0.1, 1, 10],
+            'lr': [0.01, 0.1],
+            'lr_lr': [1e-5, 1e-6, 1e-7]
+        }
+        grid_size = int(np.prod([len(values) for values in search_space.values()]))
+
+        def objective(trial):
+            trial_args = copy.deepcopy(args)
+            trial_args.lr_img = trial.suggest_categorical('lr_img', search_space['lr_img'])
+            trial_args.lr_sens = trial.suggest_categorical('lr_sens', search_space['lr_sens'])
+            trial_args.lr = trial.suggest_categorical('lr', search_space['lr'])
+            trial_args.name = (
+                f"{args.name}_trial_{trial.number}"
+                f"_lr_img_{trial_args.lr_img}"
+                f"_lr_sens_{trial_args.lr_sens}"
+                f"_lr_{trial_args.lr}"
+            )
+            trial_args.name = 'OPTUNA__' + trial_args.name
+            try:
+                best_acc = main(trial_args, trial)
+            except Exception as e:
+                print(f"Trial {trial.number} failed with exception: {e}")
+                best_acc = 0.0
+            return best_acc
+
+        storage = "sqlite:///optuna_distill_results.db"
+        sampler = optuna.samplers.GridSampler(search_space)
+        study = optuna.create_study(
+            direction='maximize',
+            sampler=sampler,
+            storage=storage,
+            load_if_exists=True,
+            study_name=args.name,
+        )
+        n_trials = min(args.optuna_trials, grid_size)
+        print(f"Running Optuna grid search for {n_trials}/{grid_size} parameter combinations.")
+        study.optimize(objective, n_trials=n_trials)
+        print(f"Best value: {study.best_value}")
+        print(f"Best params: {study.best_params}")
+        print(f"Optuna results stored in {storage}")
+    else:
+        main(args)

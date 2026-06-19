@@ -793,13 +793,14 @@ def parse_args(mode):
     parser.add_argument('--device', type=str, default=default_device, help='device to use for training')
     parser.add_argument('--train_epochs', type=int, default=50)
 
+    parser.add_argument('--save_interval', type=int, default=10)
+    parser.add_argument('--optuna_trials', type=int, default=0, help='number of optuna trials to run (0 disables search)')
+
     if mode == "buffer":
         parser.add_argument('--num_experts', type=int, default=100, help='training iterations')
         parser.add_argument('--decay', action='store_true')
         parser.add_argument('--mom', type=float, default=0, help='momentum')
         parser.add_argument('--l2', type=float, default=0, help='l2 regularization')
-        parser.add_argument('--save_interval', type=int, default=10)
-        parser.add_argument('--optuna_trials', type=int, default=0, help='number of optuna trials to run (0 disables search)')
     else:
         parser.add_argument('--spc', type=int, default=1, help='samples per class')
         parser.add_argument('--num_eval', type=int, default=5, help='how many networks to evaluate on')
