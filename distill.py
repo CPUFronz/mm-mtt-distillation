@@ -412,8 +412,6 @@ if __name__ == '__main__':
 
         import optuna
 
-        # TODO: bei exception weiter machen
-
         search_space = {
             'lr_img': [1, 10, 100, 1000],
             'lr_sens': [0.01, 0.1, 1, 10],
