@@ -436,7 +436,9 @@ if __name__ == '__main__':
                 best_acc = main(trial_args, trial)
             except Exception as e:
                 print(f"Trial {trial.number} failed with exception: {e}")
-                best_acc = 0.0
+                best_acc = 0.0                                
+                if isinstance(e, optuna.TrialPruned):
+                    raise e
             return best_acc
 
         storage = "sqlite:///optuna_distill_results.db"
