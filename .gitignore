@@ -13,3 +13,4 @@ notebooks/
 .codex
 *.pt
 *.pth
+*.ipynb_checkpoints
