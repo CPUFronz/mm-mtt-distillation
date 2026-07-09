@@ -43,6 +43,9 @@ def get_feature_extractor(channel, num_classes, im_size, args, kwargs):
 
     flat_weights = torch.cat([p.detach().reshape(-1) for p in weights], 0).to(args.device)
     model = model.to(args.device)
+    for module in model.modules():
+        if hasattr(module, 'device'):
+            module.device = args.device
     model.eval()
 
     features = {}
@@ -55,6 +58,10 @@ def get_feature_extractor(channel, num_classes, im_size, args, kwargs):
     feature_layer.register_forward_hook(save_features)
 
     def feature_extractor(x):
+        if isinstance(x, tuple):
+            x = tuple(item.to(args.device) for item in x)
+        else:
+            x = x.to(args.device)
         features.clear()
         with torch.no_grad():
             model(x, flat_param=flat_weights)
@@ -299,6 +306,9 @@ def main(args):
             fix_seed(args.seed + eval_run)
 
             net_eval = get_network(args.model, channel, num_classes, im_size, **kwargs).to(args.device)
+            for module in net_eval.modules():
+                if hasattr(module, 'device'):
+                    module.device = args.device
             _, acc_train_list, acc_test = evaluate_synset(eval_run, net_eval, images_train, labels_train, testloader, args, sensor_train=sensor_train)
             accs_train.append(acc_train_list[-1])
             accs_test.append(acc_test)
