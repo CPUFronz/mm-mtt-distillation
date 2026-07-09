@@ -79,8 +79,10 @@ def random_select(indices_class, features_all, spc):
 
     for c, idxs in enumerate(indices_class):
         if len(idxs) < spc:
-            raise ValueError(f"Not enough samples in class {c} to draw ipc={spc} (found {len(idxs)}).")
-        choice = np.random.choice(idxs, size=spc, replace=False)
+            print(f"Not enough samples in class {c} to draw spc={spc} (found {len(idxs)}).")
+            choice = idxs
+        else:
+            choice = np.random.choice(idxs, size=spc, replace=False)
         selected_indices.extend(choice)
 
     return selected_indices
@@ -93,7 +95,9 @@ def kmeans_select(indices_class, features_all, spc):
         class_indices = np.asarray(idxs, dtype=np.int64)
 
         if len(class_indices) <= spc:
-            raise ValueError(f"Not enough samples in class {c} to draw ipc={spc} (found {len(idxs)}).")
+            print(f"Not enough samples in class {c} to draw spc={spc} (found {len(idxs)}).")
+            selected_indices.extend(class_indices.tolist())
+            continue
 
         class_features = features_all[class_indices]
         km = KMeans(n_clusters=spc, n_init=10)
@@ -122,7 +126,9 @@ def dpp_select(indices_class, features_all, spc):
         cls_feat = feat_n[class_indices]
 
         if len(cls_feat) <= spc:
-            raise ValueError(f"Not enough samples in class {c} to draw ipc={spc} (found {len(idxs)}).")
+            print(f"Not enough samples in class {c} to draw spc={spc} (found {len(idxs)}).")
+            selected_indices.extend(class_indices.tolist())
+            continue
 
         pw_dist = cdist(cls_feat, cls_feat, metric='euclidean')
         sigma_vals = pw_dist[pw_dist > 0]
@@ -145,7 +151,9 @@ def kcenter_select(indices_class, features_all, spc):
         class_features = features_all[class_indices]
 
         if len(class_features) <= spc:
-            raise ValueError(f"Not enough samples in class {c} to draw ipc={spc} (found {len(idxs)}).")
+            print(f"Not enough samples in class {c} to draw spc={spc} (found {len(idxs)}).")
+            selected_indices.extend(class_indices.tolist())
+            continue
         
         chosen = [np.random.randint(len(class_features))]
         dists    = np.full(len(class_features), np.inf)
@@ -173,10 +181,7 @@ def gist_select(indices_class, features_all, spc):
         class_indices = np.asarray(idxs, dtype=np.int64)
 
         if len(class_indices) < spc:
-            raise ValueError(f"Not enough samples in class {c} to draw ipc={spc} (found {len(idxs)}).")
-        if spc <= 0:
-            continue
-        if len(class_indices) == spc:
+            print(f"Not enough samples in class {c} to draw spc={spc} (found {len(idxs)}).")
             selected_indices.extend(class_indices.tolist())
             continue
 
@@ -322,18 +327,26 @@ def main(args):
 
         print('\n')
         print(
-            f"Train Accuracy mean={np.mean(accs_train):.4f} std={np.std(accs_train):.4f} | "
-            f"Test Accuracy  mean={np.mean(accs_test):.4f}  std={np.std(accs_test):.4f}"
+            f"Train Accuracy mean={np.mean(accs_train):.5f} std={np.std(accs_train):.5f} | "
+            f"Test Accuracy  mean={np.mean(accs_test):.5f}  std={np.std(accs_test):.5f}"
         )
         print('\n' + '-' * 50)
 
-        results[method] = (np.mean(accs_test), np.std(accs_test))
+        smaller_train_set = False
+        if len(labels_train) < args.spc * num_classes:
+            smaller_train_set = True
+
+        results[method] = (np.mean(accs_test), np.std(accs_test), smaller_train_set)
 
 
     if args.method == 'all':
-        print("\nSummary of all methods (Test Accuracy):")
-        for method, (mean_acc, std_acc) in results.items():
-            print(f"{method}:".ljust(10) + f"mean={mean_acc:.3f} | std={std_acc:.3f}")
+        
+        print(f"\nSummary of all methods (Test Accuracy) for {args.dataset} {args.unimodal} SPC={args.spc}:")
+        for method, (mean_acc, std_acc, smaller_train_set) in results.items():
+            print(f"{method}:".ljust(10) + f"mean={mean_acc:.5f} | std={std_acc:.5f}")
+
+        if smaller_train_set:
+            print(f"\nNote: Some classes had fewer samples than requested SPC={args.spc}.")
 
 
 if __name__ == '__main__':
