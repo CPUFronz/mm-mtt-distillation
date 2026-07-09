@@ -277,10 +277,13 @@ def main(args):
     feature_extractor = get_feature_extractor(channel, num_classes, im_size, args, kwargs)
     features_all = []
     for idx in range(len(labels_all)):
-        img = images_all[idx] if args.unimodal != 'sensor' else None
-        sen = sensor_all[idx] if args.unimodal != 'image' and args.unimodal != 'unimodal' else None
-        input_data = img if img is not None else sen
-        feat = feature_extractor(input_data.unsqueeze(0))
+        if args.unimodal == 'unimodal':
+            input_data = images_all[idx].unsqueeze(0)
+        else:
+            img = images_all[idx] if args.unimodal != 'sensor' else torch.zeros_like(images_all[0], dtype=torch.float32)
+            sen = sensor_all[idx] if args.unimodal != 'image' else torch.zeros_like(sensor_all[0], dtype=torch.float32)
+            input_data = (img.unsqueeze(0), sen.unsqueeze(0))
+        feat = feature_extractor(input_data)
         features_all.append(feat.cpu().numpy())
     features_all = np.concatenate(features_all, axis=0)
 
@@ -297,9 +300,13 @@ def main(args):
         print(f"\nEvaluating method: {method}")
         selected_indices = function_map[method](indices_class, features_all, args.spc)
 
-        labels_train = torch.tensor(labels_all[selected_indices], dtype=torch.long)
-        images_train = images_all[selected_indices] if args.unimodal != 'sensor' else None
-        sensor_train = sensor_all[selected_indices] if args.unimodal != 'image' and args.unimodal != 'unimodal' else None
+        labels_train = labels_all[selected_indices].long()
+        if args.unimodal == 'unimodal':
+            images_train = images_all[selected_indices]
+            sensor_train = None
+        else:
+            images_train = images_all[selected_indices] if args.unimodal != 'sensor' else torch.zeros(len(selected_indices), *images_all[0].shape)
+            sensor_train = sensor_all[selected_indices] if args.unimodal != 'image' else torch.zeros(len(selected_indices), *sensor_all[0].shape)
 
         accs_train, accs_test = [], []
         for eval_run in range(args.num_eval):            
