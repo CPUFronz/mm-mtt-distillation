@@ -9,8 +9,6 @@ import wandb
 
 from utils import evaluate_synset, fix_seed, get_dataset, get_network
 
-WANDB_PREFIX = 'eml-tugraz'
-
 
 def main(args):
     api = wandb.Api()
@@ -37,7 +35,7 @@ def main(args):
 
     artifact_collection = f'distillation-eval-{args.run_id}'
     artifact_path = str(Path("logged_files") / "traces" / run.id / str(iteration_used))
-    api.artifact(f'{WANDB_PREFIX}/DatasetDistillation/{artifact_collection}:iter_{iteration_used}').download(root=artifact_path)
+    api.artifact(f'{wandb_prefix}/DatasetDistillation/{artifact_collection}:iter_{iteration_used}').download(root=artifact_path)
 
     image_fn, sensor_fn = None, None
     for fn in glob(artifact_path + "/*"):
@@ -55,23 +53,6 @@ def main(args):
         images_train = torch.load(artifact_path + "/" + image_fn, map_location="cpu").float()
     if sensor_fn:
         sensors_train = torch.load(artifact_path + "/" + sensor_fn, map_location="cpu").float()
-
-
-    """
-    image_path = next((artifact_dir / name for name in image_candidates if (artifact_dir / name).exists()), None)
-    label_path = next((artifact_dir / name for name in label_candidates if (artifact_dir / name).exists()), None)
-    if image_path is None or label_path is None:
-        raise FileNotFoundError("Could not find synthetic images/labels in artifact {}".format(artifact_ref))    
-    
-    if resolved_iteration is not None:
-        try:
-            for row in run.scan_history(keys=["Synthetic_LR", "_step"]):
-                if row.get("_step") == int(resolved_iteration) and row.get("Synthetic_LR") is not None:
-                    args.lr_net = float(row["Synthetic_LR"])
-                    break
-        except Exception:
-            pass
-    """
 
     fix_seed(run_args.seed)
     
