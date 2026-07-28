@@ -2,7 +2,7 @@
 
 Forked from https://github.com/GeorgeCazenavette/mtt-distillation
 
-## Create Conda Environmen
+## Create Conda Environment
 ```
 conda env create -f requirements.yml
 ```
