@@ -442,7 +442,7 @@ def evaluate_synset(it_eval, net, images_train, labels_train, testloader, args, 
 
 
 #####################################################################
-# added by us
+# added by Shadi and Franz
 #####################################################################
 
 # augmentations working on image + sensor start with genaral_
@@ -697,7 +697,7 @@ class DiffAugment:
 
 
 #####################################################################
-# added by me
+# added by Franz
 #####################################################################
 
 import os
