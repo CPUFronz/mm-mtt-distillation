@@ -492,7 +492,7 @@ def ResNet152(channel, num_classes):
 
 
 #####################################################################
-# added by Franz
+# added by me
 #####################################################################
 
 class CrossAttentionFusion(nn.Module):
