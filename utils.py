@@ -308,7 +308,8 @@ def get_network(model, channel, num_classes, im_size=(32, 32), dist=True, **kwar
             depth=3,
             cross_heads=1,
             latent_heads=8,
-            seq_dropout_prob=0.2
+            seq_dropout_prob=0.2,
+            device=kwargs['device']
         )
 
     else:
